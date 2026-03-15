@@ -14,8 +14,12 @@
   "contributes": {
     "commands": [
       {
-        "command": "code-line-counter.helloWorld",
-        "title": "Hello World"
+        "command": "code-line-counter.countLines",
+        "title": "Count Lines"
+      },
+      {
+        "command": "code-line-counter.analyzeWorkspace",
+        "title": "Code Line Counter: Analyze Workspace"
       }
     ]
   },
