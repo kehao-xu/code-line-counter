@@ -32,19 +32,188 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const ignore_1 = __importDefault(require("ignore"));
+const DEFAULT_IGNORE_RULES = [
+    // 版本控制系统
+    '.git/',
+    '.svn/',
+    '.hg/',
+    '.bzr/',
+    // 依赖包目录
+    'node_modules/',
+    'vendor/',
+    'bower_components/',
+    'jspm_packages/',
+    'packages/',
+    'target/', // Maven/Gradle 构建输出
+    'build/',
+    'dist/',
+    'out/',
+    'bin/',
+    'obj/',
+    'lib/',
+    'site-packages/', // Python
+    'env/', // Python 虚拟环境常见名称
+    '.venv/',
+    'venv/',
+    '__pycache__/',
+    // IDE 配置目录
+    '.idea/',
+    '.vscode/',
+    '.vs/',
+    '.eclipse/',
+    '.settings/',
+    '.project',
+    '.classpath',
+    '.metadata/',
+    '.gradle/',
+    // 构建产物/临时文件
+    'coverage/',
+    '.nyc_output/',
+    '.cache/',
+    'tmp/',
+    'temp/',
+    'logs/',
+    // 操作系统生成文件
+    '.DS_Store',
+    'Thumbs.db',
+    'desktop.ini',
+    '.Spotlight-V100',
+    '.Trashes',
+    // 常见框架/工具生成目录
+    '.next/',
+    '.nuxt/',
+    '.serverless/',
+    '.terraform/',
+    '.vagrant/',
+    'docker/',
+    'vendor/',
+    'node_modules/', // 重复但保留以强调
+];
+/**
+ * 获取工作区根目录
+ * 如果打开的是多根工作区，默认使用第一个文件夹
+ */
+function getWorkspaceRoot() {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+        return undefined;
+    }
+    return folders[0].uri.fsPath;
+}
+/**
+ * 加载忽略规则
+ * 如果存在 .codelinesignore 文件，则使用该文件内容；
+ * 否则返回内置默认规则
+ */
+function loadIgnoreRules(workspaceRoot) {
+    const ignoreFilePath = path.join(workspaceRoot, '.codelinesignore');
+    if (fs.existsSync(ignoreFilePath)) {
+        const content = fs.readFileSync(ignoreFilePath, 'utf-8');
+        // 按行分割，去除空格，忽略空行和注释行
+        const rules = content.split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => line && !line.startsWith('#'));
+        return rules;
+    }
+    // 没有自定义文件，返回默认规则
+    return DEFAULT_IGNORE_RULES;
+}
+/**
+ * 生成默认的 .codelinesignore 文件（可选命令）
+ */
+async function generateDefaultIgnoreFile(workspaceRoot) {
+    const ignoreFilePath = path.join(workspaceRoot, '.codelinesignore');
+    if (fs.existsSync(ignoreFilePath)) {
+        const overwrite = await vscode.window.showWarningMessage('.codelinesignore 文件已存在，是否覆盖？', { modal: false }, '覆盖', '取消');
+        if (overwrite !== '覆盖') {
+            return;
+        }
+    }
+    const content = DEFAULT_IGNORE_RULES.join('\n');
+    fs.writeFileSync(ignoreFilePath, content, 'utf-8');
+    vscode.window.showInformationMessage('.codelinesignore 已生成，请根据需要编辑。');
+}
+/**
+ * 通过扫描当前工作区内的目录，智能生成符合用户项目结构的 .codelinesignore 文件
+ * 该功能会分析项目中的文件和目录结构，自动识别常见的构建输出目录、依赖包目录、版本控制系统目录等，并生成相应的忽略规则。
+ * 用户可以选择是否覆盖现有的 .codelinesignore 文件。
+ * @param context
+ */
+async function generateSmartIgnoreFile(workspaceRoot) {
+    // 1. 基于默认规则检测实际存在的目录/文件
+    const newDefaultRules = [];
+    for (const rule of DEFAULT_IGNORE_RULES) {
+        // 移除末尾的 '/' 用于文件系统检测（规则可能以 '/' 结尾表示目录）
+        const rulePath = path.join(workspaceRoot, rule.replace(/\/$/, ''));
+        try {
+            if (fs.existsSync(rulePath)) {
+                newDefaultRules.push(rule); // 保留原始格式（含 '/'）
+            }
+        }
+        catch (error) {
+            console.warn(`检查路径 ${rule} 失败`, error);
+        }
+    }
+    const ignoreFilePath = path.join(workspaceRoot, '.codelinesignore');
+    let finalRules = [];
+    if (fs.existsSync(ignoreFilePath)) {
+        // 2. 读取现有文件，解析规则（去除空行和注释）
+        const existingContent = fs.readFileSync(ignoreFilePath, 'utf-8');
+        const existingRules = existingContent.split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => line && !line.startsWith('#'));
+        // 3. 分离用户自定义规则（不在 DEFAULT_IGNORE_RULES 中的规则）
+        const defaultSet = new Set(DEFAULT_IGNORE_RULES);
+        const userRules = existingRules.filter(rule => !defaultSet.has(rule));
+        // 4. 合并规则：用户规则全部保留，新检测到的默认规则去重后加入
+        const ruleSet = new Set();
+        userRules.forEach(rule => ruleSet.add(rule));
+        newDefaultRules.forEach(rule => ruleSet.add(rule));
+        finalRules = Array.from(ruleSet);
+        // 5. 检查是否有实际变化（忽略顺序）
+        const sortedExisting = [...existingRules].sort().join('\n');
+        const sortedFinal = [...finalRules].sort().join('\n');
+        if (sortedFinal === sortedExisting) {
+            vscode.window.showInformationMessage('当前 .codelinesignore 已包含所有检测到的默认规则，无需更新。');
+            return;
+        }
+        // 6. 询问用户是否合并更新
+        const answer = await vscode.window.showWarningMessage('检测到已有 .codelinesignore 文件，是否合并更新默认目录规则（保留您的自定义规则）？', { modal: false }, '更新', '取消');
+        if (answer !== '更新') {
+            vscode.window.showInformationMessage('已取消更新');
+            return;
+        }
+    }
+    else {
+        // 7. 文件不存在，直接使用新检测到的默认规则
+        finalRules = newDefaultRules;
+        if (finalRules.length === 0) {
+            vscode.window.showInformationMessage('未检测到需要忽略的常见目录，将生成空文件（可手动添加规则）');
+        }
+    }
+    // 8. 写入文件
+    const fileContent = finalRules.join('\n');
+    try {
+        fs.writeFileSync(ignoreFilePath, fileContent, 'utf-8');
+        vscode.window.showInformationMessage(`已成功生成 .codelinesignore (包含 ${finalRules.length} 条规则)`);
+    }
+    catch (error) {
+        vscode.window.showErrorMessage(`写入文件失败: ${error}`);
+    }
+}
 function activate(context) {
-    console.log('registering analyzeCurrentFile');
+    console.log('Extension "code-line-counter" is now active!');
     const disposable1 = vscode.commands.registerCommand('code-line-counter.analyzeCurrentFile', () => {
-        /*let document = vscode.window.activeTextEditor;
-        let content = document.getText();
-        let ext = document.fileName();
-        analyzeFile(content,ext);*/
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             vscode.window.showErrorMessage("请先打开一个文件");
@@ -60,63 +229,142 @@ function activate(context) {
             `注释行：${stats.commentLines}，空行：${stats.blankLines}`);
     });
     context.subscriptions.push(disposable1);
-    const disposable2 = vscode.commands.registerCommand('code-line-counter.analyzeWorkspace', async () => {
-        // 1.检查是否打开了工作区
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
+    const disposableAnalyzeWorkspace = vscode.commands.registerCommand('code-line-counter.analyzeWorkspace', async () => {
+        // 1. 检查工作区
+        const workspaceRoot = getWorkspaceRoot();
+        if (!workspaceRoot) {
             vscode.window.showErrorMessage('请先打开一个工作区');
             return;
         }
-        // 2.创建输出通道
+        // 2. 创建输出通道
         const outputChannel = vscode.window.createOutputChannel('Code Line Counter');
         outputChannel.clear();
-        outputChannel.appendLine('正在分析工作区...\n');
-        // 3. 用 findFiles 查找所有目标文件
+        outputChannel.appendLine(`工作区根目录: ${workspaceRoot}`);
+        // 3. 智能处理忽略文件（提示生成或更新）
+        const ignoreFilePath = path.join(workspaceRoot, '.codelinesignore');
+        const hasIgnoreFile = fs.existsSync(ignoreFilePath);
+        if (!hasIgnoreFile) {
+            // 无忽略文件，询问是否基于当前项目生成
+            const answer = await vscode.window.showInformationMessage('未找到 .codelinesignore 忽略文件，是否基于当前项目生成一个？', '生成', '暂不生成');
+            if (answer === '生成') {
+                await generateSmartIgnoreFile(workspaceRoot);
+                outputChannel.appendLine('已生成 .codelinesignore 文件。');
+            }
+        }
+        else {
+            // 有忽略文件，检测是否有新增的常见目录未在规则中
+            const currentRules = loadIgnoreRules(workspaceRoot); // 临时加载用于检测
+            const existingDirRules = currentRules.filter(r => r.endsWith('/'));
+            // 获取当前实际存在的常见目录（来自默认规则列表）
+            const existingDirs = [];
+            for (const dir of DEFAULT_IGNORE_RULES.filter(r => r.endsWith('/'))) {
+                const dirPath = path.join(workspaceRoot, dir.replace(/\/$/, ''));
+                if (fs.existsSync(dirPath)) {
+                    existingDirs.push(dir);
+                }
+            }
+            // 找出存在但规则中缺失的目录
+            const missingDirs = existingDirs.filter(dir => !existingDirRules.includes(dir));
+            if (missingDirs.length > 0) {
+                // 限制显示数量，避免消息过长
+                const displayDirs = missingDirs.slice(0, 3).join(', ') + (missingDirs.length > 3 ? '等' : '');
+                const answer = await vscode.window.showInformationMessage(`检测到项目中存在可能需要忽略的新目录：${displayDirs}，是否将这些目录添加到 .codelinesignore 中？`, '添加规则', '暂不添加');
+                if (answer === '添加规则') {
+                    // 追加到文件末尾
+                    const content = fs.readFileSync(ignoreFilePath, 'utf-8');
+                    const newContent = content + (content.endsWith('\n') ? '' : '\n') + missingDirs.join('\n');
+                    fs.writeFileSync(ignoreFilePath, newContent, 'utf-8');
+                    vscode.window.showInformationMessage(`已添加 ${missingDirs.length} 条新规则到 .codelinesignore`);
+                    outputChannel.appendLine(`已追加 ${missingDirs.length} 条新忽略规则。`);
+                }
+            }
+        }
+        // 4. 加载最终使用的忽略规则
+        outputChannel.appendLine('正在加载忽略规则...');
+        const rules = loadIgnoreRules(workspaceRoot);
+        const ig = (0, ignore_1.default)().add(rules);
+        outputChannel.appendLine(`忽略规则: ${rules.length} 条`);
+        // 5. 查找所有目标文件
         const pattern = '**/*.{c,cpp,py,java}';
-        const files = await vscode.workspace.findFiles(pattern); // 排除 node_modules
+        outputChannel.appendLine('正在搜索文件...');
+        const files = await vscode.workspace.findFiles(pattern);
         if (files.length === 0) {
             outputChannel.appendLine('未找到任何 C/C++/Python/Java 文件');
             outputChannel.show();
             return;
         }
+        // 6. 过滤文件（应用忽略规则）
+        const filteredFiles = files.filter(file => {
+            const absolutePath = file.fsPath;
+            const relativePath = path.relative(workspaceRoot, absolutePath);
+            const posixPath = relativePath.replace(/\\/g, '/'); // 统一为正斜杠
+            return !ig.ignores(posixPath);
+        });
+        outputChannel.appendLine(`找到 ${files.length} 个文件，忽略后剩余 ${filteredFiles.length} 个`);
+        if (filteredFiles.length === 0) {
+            outputChannel.appendLine('所有文件均被忽略规则排除');
+            outputChannel.show();
+            return;
+        }
+        // 7. 统计文件
         let totalStats = {
             files: 0,
             totalLines: 0,
             codeLines: 0,
             commentLines: 0,
-            blankLines: 0
+            blankLines: 0,
         };
-        // 4. 遍历每个文件，统计
-        for (const file of files) {
+        for (const file of filteredFiles) {
             const filePath = file.fsPath;
             const ext = path.extname(filePath).toLowerCase();
-            // 读取文件内容（注意编码）
-            const content = fs.readFileSync(filePath, 'utf-8');
-            const stats = analyzeFile(content, ext);
-            // 输出每个文件的统计
-            outputChannel.appendLine(`${path.basename(filePath)}:`);
-            outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
-            outputChannel.appendLine(`  代码行: ${stats.codeLines}`);
-            outputChannel.appendLine(`  注释行: ${stats.commentLines}`);
-            outputChannel.appendLine(`  空行: ${stats.blankLines}\n`);
-            // 累加总数
-            totalStats.files++;
-            totalStats.totalLines += stats.totalLines;
-            totalStats.codeLines += stats.codeLines;
-            totalStats.commentLines += stats.commentLines;
-            totalStats.blankLines += stats.blankLines;
+            try {
+                const content = fs.readFileSync(filePath, 'utf-8');
+                const stats = analyzeFile(content, ext);
+                outputChannel.appendLine(`${path.basename(filePath)}:`);
+                outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
+                outputChannel.appendLine(`  代码行: ${stats.codeLines}`);
+                outputChannel.appendLine(`  注释行: ${stats.commentLines}`);
+                outputChannel.appendLine(`  空行: ${stats.blankLines}\n`);
+                totalStats.files++;
+                totalStats.totalLines += stats.totalLines;
+                totalStats.codeLines += stats.codeLines;
+                totalStats.commentLines += stats.commentLines;
+                totalStats.blankLines += stats.blankLines;
+            }
+            catch (err) {
+                outputChannel.appendLine(`读取文件失败: ${filePath} - ${err}`);
+            }
         }
-        // 输出总计
+        // 8. 输出总计
         outputChannel.appendLine('========== 总计 ==========');
         outputChannel.appendLine(`文件数: ${totalStats.files}`);
         outputChannel.appendLine(`总行数: ${totalStats.totalLines}`);
         outputChannel.appendLine(`代码行: ${totalStats.codeLines}`);
         outputChannel.appendLine(`注释行: ${totalStats.commentLines}`);
         outputChannel.appendLine(`空行: ${totalStats.blankLines}`);
-        // 显示输出面板
         outputChannel.show();
     });
-    context.subscriptions.push(disposable2);
+    // 可选命令：生成默认 .codelinesignore 文件
+    const disposableGenerateIgnore = vscode.commands.registerCommand('code-line-counter.generateIgnoreFile', async () => {
+        const workspaceRoot = getWorkspaceRoot();
+        if (!workspaceRoot) {
+            vscode.window.showErrorMessage('请先打开一个工作区');
+            return;
+        }
+        await generateDefaultIgnoreFile(workspaceRoot);
+    });
+    context.subscriptions.push(disposableAnalyzeWorkspace);
+    context.subscriptions.push(disposableGenerateIgnore);
+    // 可选命令：通过扫描智能生成 .codelinesignore 文件
+    const disposableSmartGenerateIgnore = vscode.commands.registerCommand('code-line-counter.generateSmartIgnoreFile', async () => {
+        const workspaceRoot = getWorkspaceRoot();
+        if (!workspaceRoot) {
+            vscode.window.showErrorMessage('请先打开一个工作区');
+            return;
+        }
+        await generateSmartIgnoreFile(workspaceRoot);
+    });
+    context.subscriptions.push(disposableSmartGenerateIgnore);
 }
 // 文件分析函数（根据文件扩展名选择解析器）
 function analyzeFile(content, ext) {
