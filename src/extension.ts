@@ -1,37 +1,37 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "code-line-counter" is now active!');
-
-	// The command is defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
+	console.log('registering analyzeCurrentFile');
 
 	const disposable1 = vscode.commands.registerCommand(
-    	'code-line-counter.countLines', 
-    	() => {
-        	const editor = vscode.window.activeTextEditor;
-        	if (!editor) {
-        	    vscode.window.showErrorMessage('请先打开一个文件');
-        	    return;
-        	}
-        
-        	const text = editor.document.getText();
-        	const lines = text.split('\n');
-        	const totalLines = lines.length;
-        
-       		vscode.window.showInformationMessage(`总行数: ${totalLines}`);
-    	}
-	);
+		'code-line-counter.analyzeCurrentFile',
+		() => {
+			/*let document = vscode.window.activeTextEditor;
+			let content = document.getText();
+			let ext = document.fileName();
+			analyzeFile(content,ext);*/
+			const editor = vscode.window.activeTextEditor;
+			if (!editor) {
+				vscode.window.showErrorMessage("请先打开一个文件");
+				return;
+			}
+
+			const document = editor.document;
+			const content = document.getText();
+			const filePath = document.fileName;
+			const ext = path.extname(filePath).toLowerCase();
+			const stats = analyzeFile(content,ext);
+
+			vscode.window.showInformationMessage(
+				`文件：${path.basename(filePath)}\n` +
+				`总行数：${stats.totalLines}，代码行：${stats.codeLines}` +
+				`注释行：${stats.commentLines}，空行：${stats.blankLines}`
+			);
+
+		});
 
 	context.subscriptions.push(disposable1);
 
@@ -52,7 +52,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 			// 3. 用 findFiles 查找所有目标文件
         	const pattern = '**/*.{c,cpp,py,java}';
-        	const files = await vscode.workspace.findFiles(pattern, '**/node_modules/**'); // 排除 node_modules
+        	const files = await vscode.workspace.findFiles(pattern); // 排除 node_modules
 
         	if (files.length === 0) {
         	    outputChannel.appendLine('未找到任何 C/C++/Python/Java 文件');
@@ -109,7 +109,6 @@ export function activate(context: vscode.ExtensionContext) {
 
 // 文件分析函数（根据文件扩展名选择解析器）
 function analyzeFile(content: string, ext: string): any {
-    //TODO: 这个函数虽然或许能够统计不同代码文件的行数，但是在工作区有.venv等文件夹时会有问题，后续需要改进;
 	
 	const lines = content.split(/\r?\n/);
     let totalLines = lines.length;

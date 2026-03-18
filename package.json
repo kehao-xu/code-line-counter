@@ -14,8 +14,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "code-line-counter.countLines",
-        "title": "Count Lines"
+        "command": "code-line-counter.analyzeCurrentFile",
+        "title": "Code Line Counter: Analyze Current File"
       },
       {
         "command": "code-line-counter.analyzeWorkspace",
