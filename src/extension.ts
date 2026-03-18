@@ -9,10 +9,6 @@ export function activate(context: vscode.ExtensionContext) {
 	const disposable1 = vscode.commands.registerCommand(
 		'code-line-counter.analyzeCurrentFile',
 		() => {
-			/*let document = vscode.window.activeTextEditor;
-			let content = document.getText();
-			let ext = document.fileName();
-			analyzeFile(content,ext);*/
 			const editor = vscode.window.activeTextEditor;
 			if (!editor) {
 				vscode.window.showErrorMessage("请先打开一个文件");
@@ -52,7 +48,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 			// 3. 用 findFiles 查找所有目标文件
         	const pattern = '**/*.{c,cpp,py,java}';
-        	const files = await vscode.workspace.findFiles(pattern); // 排除 node_modules
+        	const files = await vscode.workspace.findFiles(pattern);
 
         	if (files.length === 0) {
         	    outputChannel.appendLine('未找到任何 C/C++/Python/Java 文件');
