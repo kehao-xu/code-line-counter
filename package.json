@@ -23,7 +23,7 @@
       },
       {
         "command": "code-line-counter.generateIgnoreFile",
-        "title": "Code Line Counter: Generate .codelinesignore File"
+        "title": "Code Line Counter: Generate Default .codelinesignore File"
       },
       {
         "command": "code-line-counter.generateSmartIgnoreFile",
