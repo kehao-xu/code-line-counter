@@ -272,6 +272,33 @@ function countNetNonBlankLinesAdded(event) {
     }
     return netAdded;
 }
+// 缓存 ignore 实例，避免每次重复加载文件
+let cachedIg = null;
+let cachedWorkspaceRoot;
+/**
+ * 获取当前工作区的 ignore 实例（基于 .codelinesignore 或默认规则）
+ */
+function getIgnoreInstance(workspaceRoot) {
+    if (cachedIg && cachedWorkspaceRoot === workspaceRoot) {
+        return cachedIg;
+    }
+    const rules = loadIgnoreRules(workspaceRoot); // 复用之前的 loadIgnoreRules
+    cachedIg = (0, ignore_1.default)().add(rules);
+    cachedWorkspaceRoot = workspaceRoot;
+    return cachedIg;
+}
+/**
+ * 判断文件是否应被忽略（根据 .codelinesignore）
+ */
+function shouldIgnoreFile(doc) {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) {
+        return false;
+    }
+    const relativePath = path.relative(workspaceRoot, doc.fileName).replace(/\\/g, '/');
+    const ig = getIgnoreInstance(workspaceRoot);
+    return ig.ignores(relativePath);
+}
 /**
  * 更新今日累计行数（增加一个正数）
  */
@@ -357,14 +384,20 @@ async function setDailyGoal(context) {
     vscode.window.showInformationMessage(`今日目标已设为 ${goal} 行，进度条已显示`);
 }
 /**
- * 禁用进度条
+ * 切换进度条显示
  */
-async function disableProgressBar(context) {
-    await context.globalState.update(PROGRESS_ENABLED_KEY, false);
+async function switchProgressBar(context) {
+    const enabled = context.globalState.get(PROGRESS_ENABLED_KEY, false);
+    await context.globalState.update(PROGRESS_ENABLED_KEY, !enabled);
     if (statusBarItem) {
-        statusBarItem.hide();
+        if (!enabled) {
+            statusBarItem.show();
+        }
+        else {
+            statusBarItem.hide();
+        }
     }
-    vscode.window.showInformationMessage('已关闭进度条');
+    vscode.window.showInformationMessage(`进度条已${!enabled ? '显示' : '隐藏'}`);
 }
 function activate(context) {
     console.log('Extension "code-line-counter" is now active!');
@@ -526,10 +559,18 @@ function activate(context) {
             docNonBlankLinesCache.set(doc.uri.toString(), countNonBlankLines(doc.getText()));
         }
     });
+    const IgWatcher = vscode.workspace.createFileSystemWatcher('**/.codelinesignore');
+    IgWatcher.onDidChange(() => {
+        cachedIg = null; // 在每次用户更改忽略文件时清除缓存，下次分析时会重新加载规则
+    });
+    context.subscriptions.push(IgWatcher);
     // 监听变更
     const changeListener = vscode.workspace.onDidChangeTextDocument(event => {
         const doc = event.document;
         if (!isSupportedDocument(doc)) {
+            return;
+        }
+        if (shouldIgnoreFile(doc)) {
             return;
         }
         const uri = doc.uri.toString();
@@ -563,11 +604,11 @@ function activate(context) {
         setDailyGoal(context);
     });
     context.subscriptions.push(setGoalCmd);
-    // 注册禁用进度条命令
-    const disableProgressCmd = vscode.commands.registerCommand('code-line-counter.disableProgressBar', () => {
-        disableProgressBar(context);
+    // 注册切换进度条命令
+    const switchProgressCmd = vscode.commands.registerCommand('code-line-counter.switchProgressBar', () => {
+        switchProgressBar(context);
     });
-    context.subscriptions.push(disableProgressCmd);
+    context.subscriptions.push(switchProgressCmd);
     // 恢复进度条状态
     const enabled = context.globalState.get(PROGRESS_ENABLED_KEY, false);
     const goal = context.globalState.get(DAILY_GOAL_KEY, 0);
