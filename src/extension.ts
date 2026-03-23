@@ -47,6 +47,7 @@ const DEFAULT_IGNORE_RULES: string[] = [
     'tmp/',
     'temp/',
     'logs/',
+    'cmake-build-debug/',
 
     // 操作系统生成文件
     '.DS_Store',
@@ -192,6 +193,171 @@ async function generateSmartIgnoreFile(workspaceRoot: string): Promise<void> {
     } catch (error) {
         vscode.window.showErrorMessage(`写入文件失败: ${error}`);
     }
+}
+
+const docNonBlankLinesCache = new Map<string, number>();
+
+/**
+ * 获取当前日期的字符串表示，用作存储键
+ */
+function getTodayDateStr(): string {
+    const now = new Date();
+    return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+}
+
+/**
+ * 获取今日已累计的代码行数（从全局状态中读取）
+ */
+export function getTodayLinesAdded(context: vscode.ExtensionContext): number {
+    const key = `linesAdded_${getTodayDateStr()}`;
+    return context.globalState.get(key, 0);
+}
+
+/**
+ * 判断文件扩展名是否属于支持的源代码文件
+ */
+function isSupportedDocument(doc: vscode.TextDocument): boolean {
+    const ext = path.extname(doc.fileName).toLowerCase();
+    return ['.c', '.cpp', '.py', '.java'].includes(ext);
+}
+
+/**
+ * 计算一段文本中非空白行的数量
+ */
+function countNonBlankLines(text: string): number {
+    return text.split(/\r?\n/).filter(line => line.trim().length > 0).length;
+}
+
+/**
+ * 计算一次文档变更中新增的非空白行数
+ * 只有通过换行符增加（即按下回车）产生的新行才会被计入，且新行必须非空。
+ */
+function countNetNonBlankLinesAdded(event: vscode.TextDocumentChangeEvent): number {
+    // 只统计支持的源代码文件
+    if (!isSupportedDocument(event.document)) {
+        return 0;
+    }
+
+    let netAdded = 0;
+    for (const change of event.contentChanges) {
+        const oldText = event.document.getText(change.range);
+        const newText = change.text;
+
+        // 计算变更前后文本的行数（通过换行符拆分）
+        const oldLines = oldText.split(/\r?\n/);
+        const newLines = newText.split(/\r?\n/);
+        const oldLineCount = oldLines.length;
+        const newLineCount = newLines.length;
+
+        // 新增的行数（按下回车导致的增加）
+        const addedLineCount = newLineCount - oldLineCount;
+        if (addedLineCount <= 0) {continue;}
+
+        // 获取新增的行（新文本的最后 addedLineCount 行）
+        const addedLines = newLines.slice(-addedLineCount);
+        // 只统计非空行（trim后不为空）
+        const nonBlankAdded = addedLines.filter(line => line.trim().length > 0).length;
+        netAdded += nonBlankAdded;
+    }
+    return netAdded;
+}
+
+/**
+ * 更新今日累计行数（增加一个正数）
+ */
+function updateTodayLinesAdded(context: vscode.ExtensionContext, delta: number) {
+    if (delta <= 0) {return;}
+    const key = `linesAdded_${getTodayDateStr()}`;
+    const current = getTodayLinesAdded(context);
+    context.globalState.update(key, current + delta);
+    updateProgressBar(context);
+}
+
+// 全局状态存储键
+const PROGRESS_ENABLED_KEY = 'progressEnabled';
+const DAILY_GOAL_KEY = 'dailyGoal';
+
+// 状态栏项
+let statusBarItem: vscode.StatusBarItem;
+// 今日已庆祝标记（避免重复弹窗）
+let celebratedToday = false;
+
+/**
+ * 更新状态栏进度条
+ */
+function updateProgressBar(context: vscode.ExtensionContext) {
+    if (!statusBarItem) {return;}
+
+    const enabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
+    const goal = context.globalState.get<number>(DAILY_GOAL_KEY, 0);
+
+    if (!enabled || goal <= 0) {
+        statusBarItem.hide();
+        return;
+    }
+
+    const todayLines = getTodayLinesAdded(context);
+    const percent = Math.min(100, Math.floor((todayLines / goal) * 100));
+    const barLength = 10;
+    const filled = Math.floor(percent / 10);
+    const empty = barLength - filled;
+    const bar = '█'.repeat(filled) + '░'.repeat(empty);
+
+    statusBarItem.text = `$(pulse) ${bar} ${todayLines}/${goal} lines (${percent}%)`;
+    statusBarItem.tooltip = `今日已写 ${todayLines} 行，目标 ${goal} 行`;
+    statusBarItem.show();
+
+    const celebratedKey = `celebrated_${getTodayDateStr()}`;
+    const alreadyCelebrated = context.globalState.get<boolean>(celebratedKey, false);
+    if (!alreadyCelebrated && todayLines >= goal) {
+        context.globalState.update(celebratedKey, true);
+        vscode.window.showInformationMessage(`🎉 恭喜！今日已完成 ${goal} 行代码目标！ 🎉`);
+    }
+}
+
+/**
+ * 重置庆祝标记（每天第一次更新时调用）
+ */
+function resetCelebratedFlagIfNeeded(context: vscode.ExtensionContext) {
+    const lastCheckDateKey = 'lastCelebratedDate';
+    const today = getTodayDateStr();
+    const lastDate = context.globalState.get<string>(lastCheckDateKey, '');
+    if (lastDate !== today) {
+        celebratedToday = false;
+        context.globalState.update(lastCheckDateKey, today);
+    }
+}
+
+/**
+ * 设置今日目标
+ */
+async function setDailyGoal(context: vscode.ExtensionContext) {
+    const input = await vscode.window.showInputBox({
+        prompt: '请输入今日代码行目标（整数）',
+        validateInput: (value) => {
+            const num = parseInt(value);
+            if (isNaN(num) || num <= 0) {return '请输入大于0的整数';}
+            return null;
+        }
+    });
+    if (!input) {return;}
+
+    const goal = parseInt(input);
+    await context.globalState.update(DAILY_GOAL_KEY, goal);
+    await context.globalState.update(PROGRESS_ENABLED_KEY, true);
+    await context.globalState.update(`celebrated_${getTodayDateStr()}`, false);
+
+    updateProgressBar(context);
+    vscode.window.showInformationMessage(`今日目标已设为 ${goal} 行，进度条已显示`);
+}
+
+/**
+ * 禁用进度条
+ */
+async function disableProgressBar(context: vscode.ExtensionContext) {
+    await context.globalState.update(PROGRESS_ENABLED_KEY, false);
+    if (statusBarItem) {statusBarItem.hide();}
+    vscode.window.showInformationMessage('已关闭进度条');
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -394,6 +560,66 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(disposableSmartGenerateIgnore);
+
+    // 初始化文档缓存
+    vscode.workspace.textDocuments.forEach(doc => {
+        if (isSupportedDocument(doc)) {
+            docNonBlankLinesCache.set(doc.uri.toString(), countNonBlankLines(doc.getText()));
+        }
+    });
+
+    // 监听变更
+    const changeListener = vscode.workspace.onDidChangeTextDocument(event => {
+        const doc = event.document;
+        if (!isSupportedDocument(doc)) {return;}
+        const uri = doc.uri.toString();
+        const current = countNonBlankLines(doc.getText());
+        const prev = docNonBlankLinesCache.get(uri) ?? 0;
+        const delta = current - prev;
+        if (delta > 0) {updateTodayLinesAdded(context, delta);}
+        docNonBlankLinesCache.set(uri, current);
+    });
+    context.subscriptions.push(changeListener);
+
+    // 监听关闭
+    const closeListener = vscode.workspace.onDidCloseTextDocument(doc => {
+        docNonBlankLinesCache.delete(doc.uri.toString());
+    });
+    context.subscriptions.push(closeListener);
+
+    // 状态栏项
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    context.subscriptions.push(statusBarItem);
+
+    // 可选：注册一个命令，让用户可以查看今日代码量
+    const showCommand = vscode.commands.registerCommand('code-line-counter.showTodayLines', () => {
+        const lines = getTodayLinesAdded(context);
+        vscode.window.showInformationMessage(`今日已写 ${lines} 行代码`);
+    });
+    context.subscriptions.push(showCommand);
+
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    context.subscriptions.push(statusBarItem);
+
+    // 注册设置目标命令
+    const setGoalCmd = vscode.commands.registerCommand('code-line-counter.setDailyGoal', () => {
+        setDailyGoal(context);
+    });
+    context.subscriptions.push(setGoalCmd);
+
+    // 注册禁用进度条命令
+    const disableProgressCmd = vscode.commands.registerCommand('code-line-counter.disableProgressBar', () => {
+        disableProgressBar(context);
+    });
+    context.subscriptions.push(disableProgressCmd);
+
+    // 恢复进度条状态
+    const enabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
+    const goal = context.globalState.get<number>(DAILY_GOAL_KEY, 0);
+    if (enabled && goal > 0) {updateProgressBar(context);}
+    else {statusBarItem.hide();}
+
+
 }
 
 // 文件分析函数（根据文件扩展名选择解析器）
