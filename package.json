@@ -15,27 +15,107 @@
     "commands": [
       {
         "command": "code-line-counter.analyzeCurrentFile",
-        "title": "Code Line Counter: Analyze Current File"
+        "title": "CLC: Analyze Current File"
       },
       {
         "command": "code-line-counter.analyzeWorkspace",
-        "title": "Code Line Counter: Analyze Workspace"
+        "title": "CLC: Analyze Workspace"
       },
       {
         "command": "code-line-counter.generateIgnoreFile",
-        "title": "Code Line Counter: Generate Default .codelinesignore File"
+        "title": "CLC: Generate Default .codelinesignore"
       },
       {
         "command": "code-line-counter.generateSmartIgnoreFile",
-        "title": "Code Line Counter: Generate Smart .codelinesignore File"
+        "title": "CLC: Generate Smart .codelinesignore"
+      },
+      {
+        "command": "code-line-counter.showTodayLines",
+        "title": "CLC: Show Today's Number of Lines"
       },
       {
         "command": "code-line-counter.setDailyGoal",
-        "title": "Code Line Counter: Set Today's goal"
+        "title": "CLC: Set Today's goal"
       },
       {
-        "command": "code-line-counter.disableProgressBar",
-        "title": "Code Line Counter: disable Progress Bar"
+        "command": "code-line-counter.switchProgressBar",
+        "title": "CLC: Switch On/Off Progress Bar"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "code-line-counter.submenu",
+        "label": "Code Line Counter"
+      }
+    ],
+    "menus": {
+        "editor/context": [
+            {
+                "submenu": "code-line-counter.submenu",
+                "group": "navigation"
+            }
+        ],
+        "explorer/context": [
+            {
+                "submenu": "code-line-counter.submenu",
+                "group": "navigation"
+            }
+        ],
+        "code-line-counter.submenu": [
+            {
+                "command": "code-line-counter.analyzeCurrentFile",
+                "group": "1_analyze"
+            },
+            {
+                "command": "code-line-counter.analyzeWorkspace",
+                "group": "1_analyze"
+            },
+            {
+                "command": "code-line-counter.generateIgnoreFile",
+                "group": "2_ignore"
+            },
+            {
+                "command": "code-line-counter.generateSmartIgnoreFile",
+                "group": "2_ignore"
+            },
+            {
+                "command": "code-line-counter.showTodayLines",
+                "group": "3_progress"
+            },
+            {
+                "command": "code-line-counter.setDailyGoal",
+                "group": "3_progress"
+            },
+            {
+                "command": "code-line-counter.switchProgressBar",
+                "group": "3_progress"
+            }
+        ]
+    },
+    "keybindings": [
+      {
+        "command": "code-line-counter.analyzeCurrentFile",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l",
+        "when": "editorTextFocus && !editorReadonly"
+      },
+      {
+        "command": "code-line-counter.showTodayLines",
+        "key": "ctrl+shift+t",
+        "mac": "cmd+shift+t",
+        "when": "!terminalFocus"
+      },
+      {
+        "command": "code-line-counter.setDailyGoal",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g",
+        "when": "!terminalFocus"
+      },
+      {
+        "command": "code-line-counter.switchProgressBar",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "!terminalFocus"
       }
     ]
   },
