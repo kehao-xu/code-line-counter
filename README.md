@@ -1,71 +1,83 @@
-# code-line-counter README
+# Code Line Counter : Alpha Test
 
-This is the README for your extension "code-line-counter". After writing up a brief description, we recommend including the following sections.
-
-## Features
-
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
-
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
-
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
+这是一个为 VS Code 打造的代码行统计插件，目前支持 **C/C++、Python、Java** 三种语言的精准统计，并提供智能忽略规则、进度条目标追踪、Excel 导出等实用功能。
 
 ---
 
-## Following extension guidelines
+## 主要功能
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+### 代码行统计
+- **Analyze Current File**：快速查看当前文件的**总行数、代码行、注释行、空行**。 
+- **Analyze Workspace**：扫描整个项目，按**语言分类**汇总，并输出详细文件列表。
+- **支持的语言**：C、C++、Python、Java（可在设置中配置启用/禁用）。
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+    *工作区统计结果会输出到**终端**
 
-## Working with Markdown
+### 智能忽略规则
+- 内置常见忽略目录（如 `.git/`、`node_modules/`、`__pycache__/` 等），开箱即用。
+- **Generate Default .codelinesignore**：生成默认忽略文件。
+- 通过 `.codelinesignore` 文件，支持自定义忽略规则（兼容 `.gitignore` 语法）。
+- **Generate Smart .codelinesignore**：根据默认忽略目录，检测项目中存在的常见目录，一键生成忽略文件。
+- **实时更新**：修改 `.codelinesignore` 后自动刷新，下次统计立即生效。
+    
+    *用户自定义的忽略目录，若不在默认忽略目录库中，则在之后调用智能生成忽略文件函数时，不会被覆盖
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+### 进度条目标追踪
+- **Set Today's Goal**，状态栏实时显示进度条（格式：`███░░░░░░░ 300/500 lines (60%)`）。
+- 只统计**非空白行**的新增行数（仅按回车产生的新行且非空才计入）。
+- 完成目标时弹出庆祝通知，跨日自动重置。
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+### 导出为 Excel
+- 将工作区统计结果导出为 `.xlsx` 文件，包含**按语言统计**和**文件详情**两个工作表。
 
-## For more information
+### 便捷操作
+- **右键菜单集成**：在编辑器或资源管理器中右键 → `Line Counter` → 选择命令。
+- **命令面板**：所有命令均可通过 `Ctrl+Shift+P` 搜索执行。
+- **快捷键绑定**：可通过右键菜单查看快捷键。
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+---
 
-**Enjoy!**
+## 🚀 Let's get started!
+
+1. 打开一个包含 C/C++/Python/Java 代码的项目。
+3. 在命令面板中运行 `CLC: Analyze Workspace` 查看统计结果。
+4. （可选）设置每日目标：`CLC: Set Today's Goal`。
+5. （可选）导出统计结果：`CLC: Export to Excel`。
+
+---
+
+## 🔧 配置
+
+通过 VS Code 设置 (`Ctrl+,`) 搜索 `code-line-counter` 可配置：
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `languages.c` | 启用 C 语言统计 | `true` |
+| `languages.cpp` | 启用 C++ 语言统计 | `true` |
+| `languages.python` | 启用 Python 统计 | `true` |
+| `languages.java` | 启用 Java 统计 | `true` |
+
+**忽略规则**：在项目根目录创建 `.codelinesignore` 文件，每行一条规则（支持 `#` 注释）。若文件不存在，插件将使用内置默认规则。
+
+---
+
+## 📋 命令列表
+
+| 命令 | 说明 |
+|------|------|
+| `CLC: Analyze Current File` | 统计当前打开文件的行数 |
+| `CLC: Analyze Workspace` | 统计整个工作区的代码行数（按语言分类） |
+| `CLC: Set Today's Goal` | 设置今日代码行目标，启用进度条 |
+| `CLC: Switch On/Off Progress Bar` | 显示/隐藏进度条 |
+| `CLC: Show Today's Number of Lines` | 显示今日已写代码行数 |
+| `CLC: Export to Excel` | 导出统计结果为 Excel 文件 |
+| `CLC: Generate Default .codelinesignore` | 生成默认的 `.codelinesignore` 文件 |
+| `CLC: Generate Smart .codelinesignore` | 智能生成忽略文件（仅包含项目中实际存在的目录） |
+
+---
+
+## 📝 注意事项
+
+- 统计的“新增行数”仅统计**非空白行**（通过按下回车创建新行并输入内容），编辑已有行不会计数。
+- 忽略规则仅影响工作区统计和进度条统计，不影响手动分析单个文件。
+- 进度条数据保存在 VS Code 全局状态中，跨日自动重置。
