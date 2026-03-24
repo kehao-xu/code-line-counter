@@ -12,6 +12,43 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Code Line Counter",
+      "properties": {
+        "code-line-counter.languages": {
+          "type": "object",
+          "title": "统计语言",
+          "description": "选择要统计的编程语言",
+          "properties": {
+            "c": {
+              "type": "boolean",
+              "default": true,
+              "description": "统计 C 语言文件",
+              "order": 1
+            },
+            "cpp": {
+              "type": "boolean",
+              "default": true,
+              "description": "统计 C++ 语言文件",
+              "order": 2
+            },
+            "python": {
+              "type": "boolean",
+              "default": true,
+              "description": "统计 Python 语言文件",
+              "order": 3
+            },
+            "java": {
+              "type": "boolean",
+              "default": true,
+              "description": "统计 Java 语言文件",
+              "order": 4
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
     "commands": [
       {
         "command": "code-line-counter.analyzeCurrentFile",

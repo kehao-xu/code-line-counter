@@ -424,6 +424,29 @@ function activate(context) {
             vscode.window.showErrorMessage('请先打开一个工作区');
             return;
         }
+        // 2. 获取用户配置的语言
+        const config = vscode.workspace.getConfiguration('code-line-counter');
+        const langConfig = config.get('languages', {});
+        const enabledLanguages = [];
+        if (langConfig.c) {
+            enabledLanguages.push({ ext: 'c', lang: 'C' });
+        }
+        if (langConfig.cpp) {
+            enabledLanguages.push({ ext: 'cpp', lang: 'C++' });
+        }
+        if (langConfig.python) {
+            enabledLanguages.push({ ext: 'py', lang: 'Python' });
+        }
+        if (langConfig.java) {
+            enabledLanguages.push({ ext: 'java', lang: 'Java' });
+        }
+        if (enabledLanguages.length === 0) {
+            vscode.window.showErrorMessage('请在设置中启用至少一种语言');
+            return;
+        }
+        // 3. 动态构建文件搜索模式
+        const extPattern = enabledLanguages.map(l => l.ext).join(',');
+        const pattern = `**/*.{${extPattern}}`;
         // 2. 创建输出通道
         const outputChannel = vscode.window.createOutputChannel('Code Line Counter');
         outputChannel.clear();
@@ -473,8 +496,7 @@ function activate(context) {
         const ig = (0, ignore_1.default)().add(rules);
         outputChannel.appendLine(`忽略规则: ${rules.length} 条`);
         // 5. 查找所有目标文件
-        const pattern = '**/*.{c,cpp,py,java}';
-        outputChannel.appendLine('正在搜索文件...');
+        outputChannel.appendLine(`正在搜索文件...`);
         const files = await vscode.workspace.findFiles(pattern);
         if (files.length === 0) {
             outputChannel.appendLine('未找到任何 C/C++/Python/Java 文件');
@@ -495,36 +517,24 @@ function activate(context) {
             outputChannel.show();
             return;
         }
-        // 初始化各语言统计
-        const langStats = {
-            'C/C++': { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 },
-            'Python': { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 },
-            'Java': { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 },
-        };
-        // 总统计（可选，也可以单独累加）
+        const langStats = {};
+        for (const lang of enabledLanguages) {
+            langStats[lang.lang] = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
+        }
         let totalStats = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
         // 7. 统计文件
         for (const file of filteredFiles) {
             const filePath = file.fsPath;
-            const ext = path.extname(filePath).toLowerCase();
-            let lang;
-            // 根据扩展名确定语言分类
-            if (ext === '.c' || ext === '.cpp') {
-                lang = 'C/C++';
-            }
-            else if (ext === '.py') {
-                lang = 'Python';
-            }
-            else if (ext === '.java') {
-                lang = 'Java';
-            }
-            else {
-                continue; // 不应该发生，因为 pattern 已限制
+            const ext = path.extname(filePath).toLowerCase().slice(1); // 去掉点
+            const langEntry = enabledLanguages.find(l => l.ext === ext);
+            if (!langEntry) {
+                continue;
             }
             try {
                 const content = fs.readFileSync(filePath, 'utf-8');
-                const stats = analyzeFile(content, ext);
+                const stats = analyzeFile(content, `.${ext}`);
                 // 更新语言统计
+                const lang = langEntry.lang;
                 langStats[lang].files++;
                 langStats[lang].totalLines += stats.totalLines;
                 langStats[lang].codeLines += stats.codeLines;
@@ -536,7 +546,7 @@ function activate(context) {
                 totalStats.codeLines += stats.codeLines;
                 totalStats.commentLines += stats.commentLines;
                 totalStats.blankLines += stats.blankLines;
-                // 输出每个文件的详细统计（可选）
+                // 输出每个文件的详细统计
                 outputChannel.appendLine(`${path.basename(filePath)}:`);
                 outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
                 outputChannel.appendLine(`  代码行: ${stats.codeLines}`);
@@ -550,8 +560,9 @@ function activate(context) {
         // 8. 输出分语言统计
         outputChannel.appendLine('========== 按语言统计 ==========');
         for (const [lang, stats] of Object.entries(langStats)) {
-            if (stats.files === 0)
-                continue; // 跳过没有文件的语言
+            if (stats.files === 0) {
+                continue;
+            }
             outputChannel.appendLine(`${lang}:`);
             outputChannel.appendLine(`  文件数: ${stats.files}`);
             outputChannel.appendLine(`  总行数: ${stats.totalLines}`);

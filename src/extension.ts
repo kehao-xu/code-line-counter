@@ -435,6 +435,25 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
+            // 2. 获取用户配置的语言
+            const config = vscode.workspace.getConfiguration('code-line-counter');
+            const langConfig = config.get<{ [key: string]: boolean }>('languages', {});
+            const enabledLanguages: { ext: string; lang: string }[] = [];
+
+            if (langConfig.c) {enabledLanguages.push({ ext: 'c', lang: 'C' });}
+            if (langConfig.cpp) {enabledLanguages.push({ ext: 'cpp', lang: 'C++' });}
+            if (langConfig.python) {enabledLanguages.push({ ext: 'py', lang: 'Python' });}
+            if (langConfig.java) {enabledLanguages.push({ ext: 'java', lang: 'Java' });}
+
+            if (enabledLanguages.length === 0) {
+                vscode.window.showErrorMessage('请在设置中启用至少一种语言');
+                return;
+            }
+
+            // 3. 动态构建文件搜索模式
+            const extPattern = enabledLanguages.map(l => l.ext).join(',');
+            const pattern = `**/*.{${extPattern}}`;
+
             // 2. 创建输出通道
             const outputChannel = vscode.window.createOutputChannel('Code Line Counter');
             outputChannel.clear();
@@ -495,8 +514,7 @@ export function activate(context: vscode.ExtensionContext) {
             outputChannel.appendLine(`忽略规则: ${rules.length} 条`);
 
             // 5. 查找所有目标文件
-            const pattern = '**/*.{c,cpp,py,java}';
-            outputChannel.appendLine('正在搜索文件...');
+            outputChannel.appendLine(`正在搜索文件...`);
             const files = await vscode.workspace.findFiles(pattern);
 
             if (files.length === 0) {
@@ -514,7 +532,7 @@ export function activate(context: vscode.ExtensionContext) {
             });
 
             outputChannel.appendLine(`找到 ${files.length} 个文件，忽略后剩余 ${filteredFiles.length} 个`);
-            outputChannel.appendLine(`---------------`)
+            outputChannel.appendLine(`---------------`);
 
             if (filteredFiles.length === 0) {
                 outputChannel.appendLine('所有文件均被忽略规则排除');
@@ -531,37 +549,25 @@ export function activate(context: vscode.ExtensionContext) {
                 blankLines: number;
             }
 
-            // 初始化各语言统计
-            const langStats: { [lang: string]: LangStats } = {
-                'C/C++': { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 },
-                'Python': { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 },
-                'Java': { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 },
-            };
-            // 总统计（可选，也可以单独累加）
+            const langStats: { [lang: string]: LangStats } = {};
+            for (const lang of enabledLanguages) {
+                langStats[lang.lang] = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
+            }
             let totalStats: LangStats = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
 
             // 7. 统计文件
             for (const file of filteredFiles) {
                 const filePath = file.fsPath;
-                const ext = path.extname(filePath).toLowerCase();
-                let lang: string;
-
-                // 根据扩展名确定语言分类
-                if (ext === '.c' || ext === '.cpp') {
-                    lang = 'C/C++';
-                } else if (ext === '.py') {
-                    lang = 'Python';
-                } else if (ext === '.java') {
-                    lang = 'Java';
-                } else {
-                    continue; // 不应该发生，因为 pattern 已限制
-                }
+                const ext = path.extname(filePath).toLowerCase().slice(1); // 去掉点
+                const langEntry = enabledLanguages.find(l => l.ext === ext);
+                if (!langEntry) {continue;}
 
                 try {
                     const content = fs.readFileSync(filePath, 'utf-8');
-                    const stats = analyzeFile(content, ext);
+                    const stats = analyzeFile(content, `.${ext}`);
 
                     // 更新语言统计
+                    const lang = langEntry.lang;
                     langStats[lang].files++;
                     langStats[lang].totalLines += stats.totalLines;
                     langStats[lang].codeLines += stats.codeLines;
@@ -575,7 +581,7 @@ export function activate(context: vscode.ExtensionContext) {
                     totalStats.commentLines += stats.commentLines;
                     totalStats.blankLines += stats.blankLines;
 
-                    // 输出每个文件的详细统计（可选）
+                    // 输出每个文件的详细统计
                     outputChannel.appendLine(`${path.basename(filePath)}:`);
                     outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
                     outputChannel.appendLine(`  代码行: ${stats.codeLines}`);
@@ -589,7 +595,7 @@ export function activate(context: vscode.ExtensionContext) {
             // 8. 输出分语言统计
             outputChannel.appendLine('========== 按语言统计 ==========');
             for (const [lang, stats] of Object.entries(langStats)) {
-                if (stats.files === 0) continue; // 跳过没有文件的语言
+                if (stats.files === 0) {continue;}
                 outputChannel.appendLine(`${lang}:`);
                 outputChannel.appendLine(`  文件数: ${stats.files}`);
                 outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
