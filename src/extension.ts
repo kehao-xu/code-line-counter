@@ -514,6 +514,7 @@ export function activate(context: vscode.ExtensionContext) {
             });
 
             outputChannel.appendLine(`找到 ${files.length} 个文件，忽略后剩余 ${filteredFiles.length} 个`);
+            outputChannel.appendLine(`---------------`)
 
             if (filteredFiles.length === 0) {
                 outputChannel.appendLine('所有文件均被忽略规则排除');
@@ -521,40 +522,83 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
-            // 7. 统计文件
-            let totalStats = {
-                files: 0,
-                totalLines: 0,
-                codeLines: 0,
-                commentLines: 0,
-                blankLines: 0,
-            };
+            // 定义语言统计类型
+            interface LangStats {
+                files: number;
+                totalLines: number;
+                codeLines: number;
+                commentLines: number;
+                blankLines: number;
+            }
 
+            // 初始化各语言统计
+            const langStats: { [lang: string]: LangStats } = {
+                'C/C++': { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 },
+                'Python': { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 },
+                'Java': { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 },
+            };
+            // 总统计（可选，也可以单独累加）
+            let totalStats: LangStats = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
+
+            // 7. 统计文件
             for (const file of filteredFiles) {
                 const filePath = file.fsPath;
                 const ext = path.extname(filePath).toLowerCase();
+                let lang: string;
+
+                // 根据扩展名确定语言分类
+                if (ext === '.c' || ext === '.cpp') {
+                    lang = 'C/C++';
+                } else if (ext === '.py') {
+                    lang = 'Python';
+                } else if (ext === '.java') {
+                    lang = 'Java';
+                } else {
+                    continue; // 不应该发生，因为 pattern 已限制
+                }
 
                 try {
                     const content = fs.readFileSync(filePath, 'utf-8');
                     const stats = analyzeFile(content, ext);
 
-                    outputChannel.appendLine(`${path.basename(filePath)}:`);
-                    outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
-                    outputChannel.appendLine(`  代码行: ${stats.codeLines}`);
-                    outputChannel.appendLine(`  注释行: ${stats.commentLines}`);
-                    outputChannel.appendLine(`  空行: ${stats.blankLines}\n`);
+                    // 更新语言统计
+                    langStats[lang].files++;
+                    langStats[lang].totalLines += stats.totalLines;
+                    langStats[lang].codeLines += stats.codeLines;
+                    langStats[lang].commentLines += stats.commentLines;
+                    langStats[lang].blankLines += stats.blankLines;
 
+                    // 更新总统计
                     totalStats.files++;
                     totalStats.totalLines += stats.totalLines;
                     totalStats.codeLines += stats.codeLines;
                     totalStats.commentLines += stats.commentLines;
                     totalStats.blankLines += stats.blankLines;
+
+                    // 输出每个文件的详细统计（可选）
+                    outputChannel.appendLine(`${path.basename(filePath)}:`);
+                    outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
+                    outputChannel.appendLine(`  代码行: ${stats.codeLines}`);
+                    outputChannel.appendLine(`  注释行: ${stats.commentLines}`);
+                    outputChannel.appendLine(`  空行: ${stats.blankLines}\n`);
                 } catch (err) {
                     outputChannel.appendLine(`读取文件失败: ${filePath} - ${err}`);
                 }
             }
 
-            // 8. 输出总计
+            // 8. 输出分语言统计
+            outputChannel.appendLine('========== 按语言统计 ==========');
+            for (const [lang, stats] of Object.entries(langStats)) {
+                if (stats.files === 0) continue; // 跳过没有文件的语言
+                outputChannel.appendLine(`${lang}:`);
+                outputChannel.appendLine(`  文件数: ${stats.files}`);
+                outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
+                outputChannel.appendLine(`  代码行: ${stats.codeLines}`);
+                outputChannel.appendLine(`  注释行: ${stats.commentLines}`);
+                outputChannel.appendLine(`  空行: ${stats.blankLines}\n`);
+            }
+
+            // 9. 输出总计
             outputChannel.appendLine('========== 总计 ==========');
             outputChannel.appendLine(`文件数: ${totalStats.files}`);
             outputChannel.appendLine(`总行数: ${totalStats.totalLines}`);
