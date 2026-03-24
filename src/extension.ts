@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import ignore from 'ignore';
+import * as XLSX from 'xlsx';
 
 const DEFAULT_IGNORE_RULES: string[] = [
     // 版本控制系统
@@ -396,9 +397,156 @@ async function switchProgressBar(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage(`进度条已${!enabled ? '显示' : '隐藏'}`);
 }
 
+/**
+ * 导出工作区统计结果为 Excel 文件
+ */
+async function exportToExcel(context: vscode.ExtensionContext) {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) {
+        vscode.window.showErrorMessage('请先打开一个工作区');
+        return;
+    }
+
+    // 1. 获取用户配置的语言（与 analyzeWorkspace 一致）
+    const config = vscode.workspace.getConfiguration('code-line-counter');
+    const langConfig = config.get<{ [key: string]: boolean }>('languages', {});
+    const enabledLanguages: { ext: string; lang: string }[] = [];
+
+    if (langConfig.c) {enabledLanguages.push({ ext: 'c', lang: 'C' });}
+    if (langConfig.cpp) {enabledLanguages.push({ ext: 'cpp', lang: 'C++' });}
+    if (langConfig.python) {enabledLanguages.push({ ext: 'py', lang: 'Python' });}
+    if (langConfig.java) {enabledLanguages.push({ ext: 'java', lang: 'Java' });}
+
+    if (enabledLanguages.length === 0) {
+        vscode.window.showErrorMessage('请在设置中启用至少一种语言');
+        return;
+    }
+
+    // 2. 构建文件模式并搜索文件
+    const extPattern = enabledLanguages.map(l => l.ext).join(',');
+    const pattern = `**/*.{${extPattern}}`;
+    const files = await vscode.workspace.findFiles(pattern);
+    if (files.length === 0) {
+        vscode.window.showErrorMessage('未找到任何符合条件的文件');
+        return;
+    }
+
+    // 3. 加载忽略规则
+    const rules = loadIgnoreRules(workspaceRoot);
+    const ig = ignore().add(rules);
+
+    // 4. 过滤文件
+    const filteredFiles = files.filter(file => {
+        const absolutePath = file.fsPath;
+        const relativePath = path.relative(workspaceRoot, absolutePath);
+        const posixPath = relativePath.replace(/\\/g, '/');
+        return !ig.ignores(posixPath);
+    });
+
+    if (filteredFiles.length === 0) {
+        vscode.window.showErrorMessage('所有文件均被忽略规则排除');
+        return;
+    }
+
+    // 5. 准备统计数据
+    interface LangStats {
+        files: number;
+        totalLines: number;
+        codeLines: number;
+        commentLines: number;
+        blankLines: number;
+    }
+
+    const langStats: { [lang: string]: LangStats } = {};
+    for (const lang of enabledLanguages) {
+        langStats[lang.lang] = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
+    }
+    let totalStats: LangStats = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
+
+    // 存储每个文件的详细统计（用于导出）
+    const fileDetails: any[] = [];
+
+    for (const file of filteredFiles) {
+        const filePath = file.fsPath;
+        const ext = path.extname(filePath).toLowerCase().slice(1);
+        const langEntry = enabledLanguages.find(l => l.ext === ext);
+        if (!langEntry) {continue;}
+
+        try {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const stats = analyzeFile(content, `.${ext}`);
+
+            // 更新语言统计
+            const lang = langEntry.lang;
+            langStats[lang].files++;
+            langStats[lang].totalLines += stats.totalLines;
+            langStats[lang].codeLines += stats.codeLines;
+            langStats[lang].commentLines += stats.commentLines;
+            langStats[lang].blankLines += stats.blankLines;
+
+            // 更新总统计
+            totalStats.files++;
+            totalStats.totalLines += stats.totalLines;
+            totalStats.codeLines += stats.codeLines;
+            totalStats.commentLines += stats.commentLines;
+            totalStats.blankLines += stats.blankLines;
+
+            // 保存文件详情
+            fileDetails.push({
+                '文件路径': path.relative(workspaceRoot, filePath),
+                '语言': lang,
+                '总行数': stats.totalLines,
+                '代码行': stats.codeLines,
+                '注释行': stats.commentLines,
+                '空行': stats.blankLines
+            });
+        } catch (err) {
+            console.error(`读取文件失败: ${filePath}`, err);
+        }
+    }
+
+    // 6. 构建 Excel 工作簿
+    const workbook = XLSX.utils.book_new();
+
+    // 工作表1：语言统计汇总
+    const langSummaryData: any[] = [['语言', '文件数', '总行数', '代码行', '注释行', '空行']];
+    for (const [lang, stats] of Object.entries(langStats)) {
+        if (stats.files === 0) {continue;}
+        langSummaryData.push([lang, stats.files, stats.totalLines, stats.codeLines, stats.commentLines, stats.blankLines]);
+    }
+    // 添加总计行
+    langSummaryData.push(['总计', totalStats.files, totalStats.totalLines, totalStats.codeLines, totalStats.commentLines, totalStats.blankLines]);
+
+    const langSheet = XLSX.utils.aoa_to_sheet(langSummaryData);
+    XLSX.utils.book_append_sheet(workbook, langSheet, '语言统计');
+
+    // 工作表2：文件详情
+    if (fileDetails.length > 0) {
+        const fileSheet = XLSX.utils.json_to_sheet(fileDetails);
+        XLSX.utils.book_append_sheet(workbook, fileSheet, '文件详情');
+    }
+
+    // 7. 选择保存位置
+    const defaultFileName = `code-line-stats-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.xlsx`;
+    const uri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(workspaceRoot, defaultFileName)),
+        filters: { 'Excel 文件': ['xlsx'] }
+    });
+    if (!uri) {return;}
+
+    // 8. 写入文件
+    try {
+        const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+        await vscode.workspace.fs.writeFile(uri, buffer);
+        vscode.window.showInformationMessage(`统计结果已导出到 ${path.basename(uri.fsPath)}`);
+    } catch (err) {
+        vscode.window.showErrorMessage(`导出失败: ${err}`);
+    }
+}
+
 export function activate(context: vscode.ExtensionContext) {
 
-	console.log('Extension "code-line-counter" is now active!');
+	console.log('Justinian of Code-Line-Counter says Hello!');
 
 	const disposable1 = vscode.commands.registerCommand(
 		'code-line-counter.analyzeCurrentFile',
@@ -454,12 +602,12 @@ export function activate(context: vscode.ExtensionContext) {
             const extPattern = enabledLanguages.map(l => l.ext).join(',');
             const pattern = `**/*.{${extPattern}}`;
 
-            // 2. 创建输出通道
+            // 4. 创建输出通道
             const outputChannel = vscode.window.createOutputChannel('Code Line Counter');
             outputChannel.clear();
             outputChannel.appendLine(`工作区根目录: ${workspaceRoot}`);
 
-            // 3. 智能处理忽略文件（提示生成或更新）
+            // 5. 智能处理忽略文件（提示生成或更新）
             const ignoreFilePath = path.join(workspaceRoot, '.codelinesignore');
             const hasIgnoreFile = fs.existsSync(ignoreFilePath);
 
@@ -507,13 +655,13 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             }
 
-            // 4. 加载最终使用的忽略规则
+            // 6. 加载最终使用的忽略规则
             outputChannel.appendLine('正在加载忽略规则...');
             const rules = loadIgnoreRules(workspaceRoot);
             const ig = ignore().add(rules);
             outputChannel.appendLine(`忽略规则: ${rules.length} 条`);
 
-            // 5. 查找所有目标文件
+            // 7. 查找所有目标文件
             outputChannel.appendLine(`正在搜索文件...`);
             const files = await vscode.workspace.findFiles(pattern);
 
@@ -523,7 +671,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
-            // 6. 过滤文件（应用忽略规则）
+            // 8. 过滤文件（应用忽略规则）
             const filteredFiles = files.filter(file => {
                 const absolutePath = file.fsPath;
                 const relativePath = path.relative(workspaceRoot, absolutePath);
@@ -555,7 +703,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
             let totalStats: LangStats = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
 
-            // 7. 统计文件
+            // 9. 统计文件
             for (const file of filteredFiles) {
                 const filePath = file.fsPath;
                 const ext = path.extname(filePath).toLowerCase().slice(1); // 去掉点
@@ -592,7 +740,7 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             }
 
-            // 8. 输出分语言统计
+            // 10. 输出分语言统计
             outputChannel.appendLine('========== 按语言统计 ==========');
             for (const [lang, stats] of Object.entries(langStats)) {
                 if (stats.files === 0) {continue;}
@@ -604,7 +752,7 @@ export function activate(context: vscode.ExtensionContext) {
                 outputChannel.appendLine(`  空行: ${stats.blankLines}\n`);
             }
 
-            // 9. 输出总计
+            // 11. 输出总计
             outputChannel.appendLine('========== 总计 ==========');
             outputChannel.appendLine(`文件数: ${totalStats.files}`);
             outputChannel.appendLine(`总行数: ${totalStats.totalLines}`);
@@ -713,7 +861,10 @@ export function activate(context: vscode.ExtensionContext) {
     if (enabled && goal > 0) {updateProgressBar(context);}
     else {statusBarItem.hide();}
 
-
+    const exportCmd = vscode.commands.registerCommand('code-line-counter.exportToExcel', () => {
+        exportToExcel(context);
+    });
+    context.subscriptions.push(exportCmd);
 }
 
 // 文件分析函数（根据文件扩展名选择解析器）

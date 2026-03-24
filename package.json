@@ -72,11 +72,15 @@
       },
       {
         "command": "code-line-counter.setDailyGoal",
-        "title": "CLC: Set Today's goal"
+        "title": "CLC: Set Today's Goal"
       },
       {
         "command": "code-line-counter.switchProgressBar",
         "title": "CLC: Switch On/Off Progress Bar"
+      },
+      {
+        "command": "code-line-counter.exportToExcel",
+        "title": "CLC: Export to Excel"
       }
     ],
     "submenus": [
@@ -86,48 +90,52 @@
       }
     ],
     "menus": {
-        "editor/context": [
-            {
-                "submenu": "code-line-counter.submenu",
-                "group": "navigation"
-            }
-        ],
-        "explorer/context": [
-            {
-                "submenu": "code-line-counter.submenu",
-                "group": "navigation"
-            }
-        ],
-        "code-line-counter.submenu": [
-            {
-                "command": "code-line-counter.analyzeCurrentFile",
-                "group": "1_analyze"
-            },
-            {
-                "command": "code-line-counter.analyzeWorkspace",
-                "group": "1_analyze"
-            },
-            {
-                "command": "code-line-counter.generateIgnoreFile",
-                "group": "2_ignore"
-            },
-            {
-                "command": "code-line-counter.generateSmartIgnoreFile",
-                "group": "2_ignore"
-            },
-            {
-                "command": "code-line-counter.showTodayLines",
-                "group": "3_progress"
-            },
-            {
-                "command": "code-line-counter.setDailyGoal",
-                "group": "3_progress"
-            },
-            {
-                "command": "code-line-counter.switchProgressBar",
-                "group": "3_progress"
-            }
-        ]
+      "editor/context": [
+        {
+          "submenu": "code-line-counter.submenu",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "submenu": "code-line-counter.submenu",
+          "group": "navigation"
+        }
+      ],
+      "code-line-counter.submenu": [
+        {
+          "command": "code-line-counter.analyzeCurrentFile",
+          "group": "1_analyze"
+        },
+        {
+          "command": "code-line-counter.analyzeWorkspace",
+          "group": "1_analyze"
+        },
+        {
+          "command": "code-line-counter.generateIgnoreFile",
+          "group": "2_ignore"
+        },
+        {
+          "command": "code-line-counter.generateSmartIgnoreFile",
+          "group": "2_ignore"
+        },
+        {
+          "command": "code-line-counter.showTodayLines",
+          "group": "3_progress"
+        },
+        {
+          "command": "code-line-counter.setDailyGoal",
+          "group": "3_progress"
+        },
+        {
+          "command": "code-line-counter.switchProgressBar",
+          "group": "3_progress"
+        },
+        {
+          "command": "code-line-counter.exportToExcel",
+          "group": "4_export"
+        }
+      ]
     },
     "keybindings": [
       {
@@ -175,6 +183,7 @@
     "typescript-eslint": "^8.56.1"
   },
   "dependencies": {
-    "ignore": "^7.0.5"
+    "ignore": "^7.0.5",
+    "xlsx": "^0.18.5"
   }
 }
