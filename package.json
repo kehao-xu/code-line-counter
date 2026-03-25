@@ -2,9 +2,9 @@
   "name": "code-line-counter",
   "displayName": "code-line-counter",
   "description": "an extension that provides basic analysis of codes by c/c++, python or java",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "engines": {
-    "vscode": "^1.110.0"
+    "vscode": "^1.100.0"
   },
   "categories": [
     "Other"
@@ -32,17 +32,29 @@
               "description": "统计 C++ 语言文件",
               "order": 2
             },
-            "python": {
+            "h": {
+              "type": "boolean",
+              "default": true,
+              "description": "统计 C 头文件",
+              "order": 3
+            },
+            "hpp": {
+              "type": "boolean",
+              "default": true,
+              "description": "统计 C++ 头文件",
+              "order": 4
+            },
+            "py": {
               "type": "boolean",
               "default": true,
               "description": "统计 Python 语言文件",
-              "order": 3
+              "order": 5
             },
             "java": {
               "type": "boolean",
               "default": true,
               "description": "统计 Java 语言文件",
-              "order": 4
+              "order": 6
             }
           },
           "additionalProperties": false
@@ -77,6 +89,10 @@
       {
         "command": "code-line-counter.switchProgressBar",
         "title": "CLC: Switch On/Off Progress Bar"
+      },
+      {
+        "command": "code-line-counter.resetTodayLines",
+        "title": "CLC: Reset Today's Lines"
       },
       {
         "command": "code-line-counter.exportToExcel",
@@ -132,6 +148,10 @@
           "group": "3_progress"
         },
         {
+          "command": "code-line-counter.resetTodayLines",
+          "group": "3_progress"
+        },
+        {
           "command": "code-line-counter.exportToExcel",
           "group": "4_export"
         }
@@ -175,7 +195,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "@types/vscode": "^1.110.0",
+    "@types/vscode": "^1.100.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
     "eslint": "^9.39.3",

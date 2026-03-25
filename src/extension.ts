@@ -219,7 +219,7 @@ export function getTodayLinesAdded(context: vscode.ExtensionContext): number {
  */
 function isSupportedDocument(doc: vscode.TextDocument): boolean {
     const ext = path.extname(doc.fileName).toLowerCase();
-    return ['.c', '.cpp', '.py', '.java'].includes(ext);
+    return ['.c', '.cpp', '.py', '.java','.h','.hpp'].includes(ext);
 }
 
 /**
@@ -227,40 +227,6 @@ function isSupportedDocument(doc: vscode.TextDocument): boolean {
  */
 function countNonBlankLines(text: string): number {
     return text.split(/\r?\n/).filter(line => line.trim().length > 0).length;
-}
-
-/**
- * 计算一次文档变更中新增的非空白行数
- * 只有通过换行符增加（即按下回车）产生的新行才会被计入，且新行必须非空。
- */
-function countNetNonBlankLinesAdded(event: vscode.TextDocumentChangeEvent): number {
-    // 只统计支持的源代码文件
-    if (!isSupportedDocument(event.document)) {
-        return 0;
-    }
-
-    let netAdded = 0;
-    for (const change of event.contentChanges) {
-        const oldText = event.document.getText(change.range);
-        const newText = change.text;
-
-        // 计算变更前后文本的行数（通过换行符拆分）
-        const oldLines = oldText.split(/\r?\n/);
-        const newLines = newText.split(/\r?\n/);
-        const oldLineCount = oldLines.length;
-        const newLineCount = newLines.length;
-
-        // 新增的行数（按下回车导致的增加）
-        const addedLineCount = newLineCount - oldLineCount;
-        if (addedLineCount <= 0) {continue;}
-
-        // 获取新增的行（新文本的最后 addedLineCount 行）
-        const addedLines = newLines.slice(-addedLineCount);
-        // 只统计非空行（trim后不为空）
-        const nonBlankAdded = addedLines.filter(line => line.trim().length > 0).length;
-        netAdded += nonBlankAdded;
-    }
-    return netAdded;
 }
 
 // 缓存 ignore 实例，避免每次重复加载文件
@@ -287,19 +253,98 @@ function shouldIgnoreFile(doc: vscode.TextDocument): boolean {
     const workspaceRoot = getWorkspaceRoot();
     if (!workspaceRoot) {return false;}
 
+    //判断该文件是否属于.codelinesignore的忽略范围
     const relativePath = path.relative(workspaceRoot, doc.fileName).replace(/\\/g, '/');
     const ig = getIgnoreInstance(workspaceRoot);
-    return ig.ignores(relativePath);
+    if(ig.ignores(relativePath)) {
+        return true;
+    }
+
+    // 判断该文件的扩展名是否属于用户配置中启用的语言
+    const config = vscode.workspace.getConfiguration('code-line-counter');
+    const langConfig = config.get<{ [key: string]: boolean }>('languages', {});
+    const ext = path.extname(doc.fileName).toLowerCase().slice(1);
+    if (langConfig[ext]) {
+        return false;
+    }
+    return true;
+}
+
+async function initializeTodayLines(context: vscode.ExtensionContext) { 
+            // 1. 检查工作区
+            const workspaceRoot = getWorkspaceRoot();
+            if (!workspaceRoot) {
+                vscode.window.showErrorMessage('请先打开一个工作区');
+                return;
+            }
+
+            const enabledLanguages: { ext: string; lang: string }[] = [{ext: 'c', lang: 'C'}, 
+                {ext: 'cpp', lang: 'C++'}, 
+                {ext: 'h', lang: 'C Header'}, 
+                {ext: 'hpp', lang: 'C++ Header'}, 
+                {ext: 'py', lang: 'Python'},
+                {ext: 'java', lang: 'Java'}];
+
+            // 2. 动态构建文件搜索模式
+            const extPattern = enabledLanguages.map(l => l.ext).join(',');
+            const pattern = `**/*.{${extPattern}}`;
+
+            // 3. 加载忽略规则并查找文件
+            const rules = loadIgnoreRules(workspaceRoot);
+            const ig = ignore().add(rules);
+            const files = await vscode.workspace.findFiles(pattern);
+
+            if (files.length === 0) {
+                vscode.window.showErrorMessage('未找到任何符合条件的文件');
+                return;
+            }
+
+            const filteredFiles = files.filter(file => {
+                const absolutePath = file.fsPath;
+                const relativePath = path.relative(workspaceRoot, absolutePath);
+                const posixPath = relativePath.replace(/\\/g, '/'); // 统一为正斜杠
+                return !ig.ignores(posixPath);
+            });
+
+            if (filteredFiles.length === 0) {
+                vscode.window.showErrorMessage('所有文件均被忽略规则排除');
+                return;
+            }
+
+            for (const file of filteredFiles) {
+                const filePath = file.fsPath;
+                const ext = path.extname(filePath).toLowerCase().slice(1); // 去掉点
+                const langEntry = enabledLanguages.find(l => l.ext === ext);
+                if (!langEntry) {continue;}
+
+                try {
+                    const uint8Array = await vscode.workspace.fs.readFile(file);
+                    const TextContent = new TextDecoder('utf-8').decode(uint8Array);
+                    docNonBlankLinesCache.set(file.toString(), countNonBlankLines(TextContent));
+                } catch (err) {
+                    vscode.window.showErrorMessage(`读取文件失败: ${filePath}`);
+                }
+            }
 }
 
 /**
- * 更新今日累计行数（增加一个正数）
+ * 更新今日累计行数（在文档变更事件中调用）
  */
 function updateTodayLinesAdded(context: vscode.ExtensionContext, delta: number) {
-    if (delta <= 0) {return;}
     const key = `linesAdded_${getTodayDateStr()}`;
     const current = getTodayLinesAdded(context);
+    if (current + delta < 0) {return;}
     context.globalState.update(key, current + delta);
+    updateProgressBar(context);
+}
+
+/**
+ * 清空今日已累计行数
+ */
+function resetTodayLines(context: vscode.ExtensionContext) {
+    initializeTodayLines(context);
+    const key = `linesAdded_${getTodayDateStr()}`;
+    context.globalState.update(key, 0);
     updateProgressBar(context);
 }
 
@@ -414,7 +459,9 @@ async function exportToExcel(context: vscode.ExtensionContext) {
 
     if (langConfig.c) {enabledLanguages.push({ ext: 'c', lang: 'C' });}
     if (langConfig.cpp) {enabledLanguages.push({ ext: 'cpp', lang: 'C++' });}
-    if (langConfig.python) {enabledLanguages.push({ ext: 'py', lang: 'Python' });}
+    if (langConfig.h) {enabledLanguages.push({ ext: 'h', lang: 'C Header' });}
+    if (langConfig.hpp) {enabledLanguages.push({ ext: 'hpp', lang: 'C++ Header' });}
+    if (langConfig.py) {enabledLanguages.push({ ext: 'py', lang: 'Python' });}
     if (langConfig.java) {enabledLanguages.push({ ext: 'java', lang: 'Java' });}
 
     if (enabledLanguages.length === 0) {
@@ -590,11 +637,13 @@ export function activate(context: vscode.ExtensionContext) {
 
             if (langConfig.c) {enabledLanguages.push({ ext: 'c', lang: 'C' });}
             if (langConfig.cpp) {enabledLanguages.push({ ext: 'cpp', lang: 'C++' });}
-            if (langConfig.python) {enabledLanguages.push({ ext: 'py', lang: 'Python' });}
+            if (langConfig.h) {enabledLanguages.push({ ext: 'h', lang: 'C Header' });}
+            if (langConfig.hpp) {enabledLanguages.push({ ext: 'hpp', lang: 'C++ Header' });}
+            if (langConfig.py) {enabledLanguages.push({ ext: 'py', lang: 'Python' });}
             if (langConfig.java) {enabledLanguages.push({ ext: 'java', lang: 'Java' });}
 
             if (enabledLanguages.length === 0) {
-                vscode.window.showErrorMessage('请在设置中启用至少一种语言');
+                vscode.window.showErrorMessage('请在设置中启用至少一种您想要CLC分析的语言');
                 return;
             }
 
@@ -730,13 +779,13 @@ export function activate(context: vscode.ExtensionContext) {
                     totalStats.blankLines += stats.blankLines;
 
                     // 输出每个文件的详细统计
-                    outputChannel.appendLine(`${path.basename(filePath)}:`);
+                    outputChannel.appendLine(`.\\${path.relative(workspaceRoot, filePath)}:`);
                     outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
                     outputChannel.appendLine(`  代码行: ${stats.codeLines}`);
                     outputChannel.appendLine(`  注释行: ${stats.commentLines}`);
                     outputChannel.appendLine(`  空行: ${stats.blankLines}\n`);
                 } catch (err) {
-                    outputChannel.appendLine(`读取文件失败: ${filePath} - ${err}`);
+                    outputChannel.appendLine(`读取文件失败: ${path.relative(workspaceRoot, filePath)} - ${err}`);
                 }
             }
 
@@ -796,15 +845,12 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(disposableSmartGenerateIgnore);
 
     // 初始化文档缓存
-    vscode.workspace.textDocuments.forEach(doc => {
-        if (isSupportedDocument(doc)) {
-            docNonBlankLinesCache.set(doc.uri.toString(), countNonBlankLines(doc.getText()));
-        }
-    });
+    initializeTodayLines(context);
 
     const IgWatcher = vscode.workspace.createFileSystemWatcher('**/.codelinesignore');
     IgWatcher.onDidChange(() => {
         cachedIg = null; // 在每次用户更改忽略文件时清除缓存，下次分析时会重新加载规则
+        initializeTodayLines(context); // 重新初始化今日行数缓存，确保新规则生效
     });
     context.subscriptions.push(IgWatcher);
 
@@ -818,7 +864,7 @@ export function activate(context: vscode.ExtensionContext) {
         const current = countNonBlankLines(doc.getText());
         const prev = docNonBlankLinesCache.get(uri) ?? 0;
         const delta = current - prev;
-        if (delta > 0) {updateTodayLinesAdded(context, delta);}
+        updateTodayLinesAdded(context, delta);
         docNonBlankLinesCache.set(uri, current);
     });
     context.subscriptions.push(changeListener);
@@ -865,6 +911,15 @@ export function activate(context: vscode.ExtensionContext) {
         exportToExcel(context);
     });
     context.subscriptions.push(exportCmd);
+
+    const resetCmd = vscode.commands.registerCommand('code-line-counter.resetTodayLines', 
+        async() => {
+        const answer = await vscode.window.showWarningMessage('确定要重置今日累计行数吗？', '重置', '取消');
+        if (answer === '重置') {
+            resetTodayLines(context);
+            vscode.window.showInformationMessage('今日累计行数已重置');
+        }
+    });
 }
 
 // 文件分析函数（根据文件扩展名选择解析器）
@@ -881,7 +936,7 @@ function analyzeFile(content: string, ext: string): any {
     let multiLineCommentStart = '';
     let multiLineCommentEnd = '';
     
-    if (ext === '.c' || ext === '.cpp' || ext === '.java') {
+    if (ext === '.c' || ext === '.cpp' || ext === '.java' || ext === '.h' || ext === '.hpp') {
         singleLineComment = ['//'];
         multiLineCommentStart = '/*';
         multiLineCommentEnd = '*/';
@@ -889,7 +944,6 @@ function analyzeFile(content: string, ext: string): any {
         singleLineComment = ['#'];
         multiLineCommentStart = '"""';
         multiLineCommentEnd = '"""';
-        // Python 还有 ''' 作为多行字符串，简单起见我们可以先处理一种
     }
     
     let inMultiLineComment = false;
