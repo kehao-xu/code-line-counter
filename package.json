@@ -2,14 +2,16 @@
   "name": "code-line-counter",
   "displayName": "code-line-counter",
   "description": "an extension that provides basic analysis of codes by c/c++, python or java",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "engines": {
     "vscode": "^1.100.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {

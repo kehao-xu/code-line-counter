@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import ignore from 'ignore';
 import * as XLSX from 'xlsx';
+import { stringify } from 'querystring';
 
 const DEFAULT_IGNORE_RULES: string[] = [
     // 版本控制系统
@@ -67,6 +68,14 @@ const DEFAULT_IGNORE_RULES: string[] = [
     'vendor/',
     'node_modules/', // 重复但保留以强调
 ];
+
+const ALL_SUPPORTED_LANGUAGES: { ext: string; lang: string }[] = [
+        {ext: 'c', lang: 'C'}, 
+        {ext: 'cpp', lang: 'C++'}, 
+        {ext: 'h', lang: 'C Header'}, 
+        {ext: 'hpp', lang: 'C++ Header'}, 
+        {ext: 'py', lang: 'Python'},
+        {ext: 'java', lang: 'Java'}];
 
 /**
  * 获取工作区根目录
@@ -240,7 +249,7 @@ function getIgnoreInstance(workspaceRoot: string): ReturnType<typeof ignore> {
     if (cachedIg && cachedWorkspaceRoot === workspaceRoot) {
         return cachedIg;
     }
-    const rules = loadIgnoreRules(workspaceRoot); // 复用之前的 loadIgnoreRules
+    const rules = loadIgnoreRules(workspaceRoot);
     cachedIg = ignore().add(rules);
     cachedWorkspaceRoot = workspaceRoot;
     return cachedIg;
@@ -271,60 +280,53 @@ function shouldIgnoreFile(doc: vscode.TextDocument): boolean {
 }
 
 async function initializeTodayLines(context: vscode.ExtensionContext) { 
-            // 1. 检查工作区
-            const workspaceRoot = getWorkspaceRoot();
-            if (!workspaceRoot) {
-                vscode.window.showErrorMessage('请先打开一个工作区');
-                return;
-            }
+    // 1. 检查工作区
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) {
+        vscode.window.showErrorMessage('请先打开一个工作区');
+        return;
+    }
 
-            const enabledLanguages: { ext: string; lang: string }[] = [{ext: 'c', lang: 'C'}, 
-                {ext: 'cpp', lang: 'C++'}, 
-                {ext: 'h', lang: 'C Header'}, 
-                {ext: 'hpp', lang: 'C++ Header'}, 
-                {ext: 'py', lang: 'Python'},
-                {ext: 'java', lang: 'Java'}];
+    // 2. 动态构建文件搜索模式
+    const extPattern = ALL_SUPPORTED_LANGUAGES.map(l => l.ext).join(',');
+    const pattern = `**/*.{${extPattern}}`;
 
-            // 2. 动态构建文件搜索模式
-            const extPattern = enabledLanguages.map(l => l.ext).join(',');
-            const pattern = `**/*.{${extPattern}}`;
+    // 3. 加载忽略规则并查找文件
+    const rules = DEFAULT_IGNORE_RULES;
+    const ig = ignore().add(rules);
+    const files = await vscode.workspace.findFiles(pattern);
 
-            // 3. 加载忽略规则并查找文件
-            const rules = loadIgnoreRules(workspaceRoot);
-            const ig = ignore().add(rules);
-            const files = await vscode.workspace.findFiles(pattern);
+    if (files.length === 0) {
+        vscode.window.showErrorMessage('未找到任何符合条件的文件');
+        return;
+    }
 
-            if (files.length === 0) {
-                vscode.window.showErrorMessage('未找到任何符合条件的文件');
-                return;
-            }
+    const filteredFiles = files.filter(file => {
+    const absolutePath = file.fsPath;
+    const relativePath = path.relative(workspaceRoot, absolutePath);
+    const posixPath = relativePath.replace(/\\/g, '/'); // 统一为正斜杠
+        return !ig.ignores(posixPath);
+    });
 
-            const filteredFiles = files.filter(file => {
-                const absolutePath = file.fsPath;
-                const relativePath = path.relative(workspaceRoot, absolutePath);
-                const posixPath = relativePath.replace(/\\/g, '/'); // 统一为正斜杠
-                return !ig.ignores(posixPath);
-            });
+    if (filteredFiles.length === 0) {
+        vscode.window.showErrorMessage('所有文件均被忽略规则排除');
+        return;
+    }
 
-            if (filteredFiles.length === 0) {
-                vscode.window.showErrorMessage('所有文件均被忽略规则排除');
-                return;
-            }
+    for (const file of filteredFiles) {
+        const filePath = file.fsPath;
+        const ext = path.extname(filePath).toLowerCase().slice(1); 
+        const langEntry = ALL_SUPPORTED_LANGUAGES.find(l => l.ext === ext);
+        if (!langEntry) {continue;}
 
-            for (const file of filteredFiles) {
-                const filePath = file.fsPath;
-                const ext = path.extname(filePath).toLowerCase().slice(1); // 去掉点
-                const langEntry = enabledLanguages.find(l => l.ext === ext);
-                if (!langEntry) {continue;}
-
-                try {
-                    const uint8Array = await vscode.workspace.fs.readFile(file);
-                    const TextContent = new TextDecoder('utf-8').decode(uint8Array);
-                    docNonBlankLinesCache.set(file.toString(), countNonBlankLines(TextContent));
-                } catch (err) {
-                    vscode.window.showErrorMessage(`读取文件失败: ${filePath}`);
-                }
-            }
+        try {
+            const uint8Array = await vscode.workspace.fs.readFile(file);
+            const TextContent = new TextDecoder('utf-8').decode(uint8Array);
+            docNonBlankLinesCache.set(file.toString(), countNonBlankLines(TextContent));
+        } catch (err) {
+            vscode.window.showErrorMessage(`读取文件失败: ${filePath}`);
+        }
+    }
 }
 
 /**
@@ -354,8 +356,6 @@ const DAILY_GOAL_KEY = 'dailyGoal';
 
 // 状态栏项
 let statusBarItem: vscode.StatusBarItem;
-// 今日已庆祝标记（避免重复弹窗）
-let celebratedToday = false;
 
 /**
  * 更新状态栏进度条
@@ -393,12 +393,12 @@ function updateProgressBar(context: vscode.ExtensionContext) {
 /**
  * 重置庆祝标记（每天第一次更新时调用）
  */
-function resetCelebratedFlagIfNeeded(context: vscode.ExtensionContext) {
+function resetDailyGoalIfNeeded(context: vscode.ExtensionContext) {
     const lastCheckDateKey = 'lastCelebratedDate';
     const today = getTodayDateStr();
     const lastDate = context.globalState.get<string>(lastCheckDateKey, '');
     if (lastDate !== today) {
-        celebratedToday = false;
+        context.globalState.update(DAILY_GOAL_KEY, 0);
         context.globalState.update(lastCheckDateKey, today);
     }
 }
@@ -407,6 +407,7 @@ function resetCelebratedFlagIfNeeded(context: vscode.ExtensionContext) {
  * 设置今日目标
  */
 async function setDailyGoal(context: vscode.ExtensionContext) {
+    resetDailyGoalIfNeeded(context);
     const input = await vscode.window.showInputBox({
         prompt: '请输入今日代码行目标（整数）',
         validateInput: (value) => {
@@ -423,7 +424,33 @@ async function setDailyGoal(context: vscode.ExtensionContext) {
     await context.globalState.update(`celebrated_${getTodayDateStr()}`, false);
 
     updateProgressBar(context);
-    vscode.window.showInformationMessage(`今日目标已设为 ${goal} 行，进度条已显示`);
+    const enabledLanguages:{ext: string, lang: string}[] = get_enabled_languages(context);
+    const langNames = enabledLanguages.map(l => l.lang).join('、');
+    if (!langNames) {
+        vscode.window.showInformationMessage(
+            '今日代码目标已设置，进度条已显示。但您好像没有选择任何想要统计的语言，需要修改相关设置吗？',
+            '打开设置'
+        ).then(Selection => {
+            if (Selection === '打开设置'){
+                vscode.commands.executeCommand(
+                    'workbench.action.openSettings',
+                    'Extensions:code-line-counter'
+                );
+            }
+        });
+    } else {
+        vscode.window.showInformationMessage(
+            `今日代码目标已设置，进度条已显示。目前统计的语言有${langNames}，您想要修改相关设置吗？`,
+            '打开设置'
+        ).then(Selection => {
+            if (Selection === '打开设置'){
+                vscode.commands.executeCommand(
+                    'workbench.action.openSettings',
+                    'Extensions:code-line-counter'
+                );
+            }
+        });
+    }
 }
 
 /**
@@ -442,17 +469,7 @@ async function switchProgressBar(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage(`进度条已${!enabled ? '显示' : '隐藏'}`);
 }
 
-/**
- * 导出工作区统计结果为 Excel 文件
- */
-async function exportToExcel(context: vscode.ExtensionContext) {
-    const workspaceRoot = getWorkspaceRoot();
-    if (!workspaceRoot) {
-        vscode.window.showErrorMessage('请先打开一个工作区');
-        return;
-    }
-
-    // 1. 获取用户配置的语言（与 analyzeWorkspace 一致）
+function get_enabled_languages(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('code-line-counter');
     const langConfig = config.get<{ [key: string]: boolean }>('languages', {});
     const enabledLanguages: { ext: string; lang: string }[] = [];
@@ -464,6 +481,21 @@ async function exportToExcel(context: vscode.ExtensionContext) {
     if (langConfig.py) {enabledLanguages.push({ ext: 'py', lang: 'Python' });}
     if (langConfig.java) {enabledLanguages.push({ ext: 'java', lang: 'Java' });}
 
+    return enabledLanguages;
+}
+
+/**
+ * 导出工作区统计结果为 Excel 文件
+ */
+async function exportToExcel(context: vscode.ExtensionContext) {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) {
+        vscode.window.showErrorMessage('请先打开一个工作区');
+        return;
+    }
+
+    // 1. 获取用户配置的语言（与 analyzeWorkspace 一致）
+    const enabledLanguages: { ext: string; lang: string }[] = get_enabled_languages(context);
     if (enabledLanguages.length === 0) {
         vscode.window.showErrorMessage('请在设置中启用至少一种语言');
         return;
@@ -595,7 +627,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	console.log('Justinian of Code-Line-Counter says Hello!');
 
-	const disposable1 = vscode.commands.registerCommand(
+	const disposableAnalyzeFile = vscode.commands.registerCommand(
 		'code-line-counter.analyzeCurrentFile',
 		() => {
 			const editor = vscode.window.activeTextEditor;
@@ -605,6 +637,11 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			const document = editor.document;
+            if (!isSupportedDocument(document)) {
+                vscode.window.showErrorMessage(`这并非CLC能够统计的源代码文件`);
+                return;
+            }
+
 			const content = document.getText();
 			const filePath = document.fileName;
 			const ext = path.extname(filePath).toLowerCase();
@@ -618,7 +655,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 		});
 
-	context.subscriptions.push(disposable1);
+	context.subscriptions.push(disposableAnalyzeFile);
 
     const disposableAnalyzeWorkspace = vscode.commands.registerCommand(
         'code-line-counter.analyzeWorkspace',
@@ -631,17 +668,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             // 2. 获取用户配置的语言
-            const config = vscode.workspace.getConfiguration('code-line-counter');
-            const langConfig = config.get<{ [key: string]: boolean }>('languages', {});
-            const enabledLanguages: { ext: string; lang: string }[] = [];
-
-            if (langConfig.c) {enabledLanguages.push({ ext: 'c', lang: 'C' });}
-            if (langConfig.cpp) {enabledLanguages.push({ ext: 'cpp', lang: 'C++' });}
-            if (langConfig.h) {enabledLanguages.push({ ext: 'h', lang: 'C Header' });}
-            if (langConfig.hpp) {enabledLanguages.push({ ext: 'hpp', lang: 'C++ Header' });}
-            if (langConfig.py) {enabledLanguages.push({ ext: 'py', lang: 'Python' });}
-            if (langConfig.java) {enabledLanguages.push({ ext: 'java', lang: 'Java' });}
-
+            const enabledLanguages: { ext: string; lang: string }[] = get_enabled_languages(context);
             if (enabledLanguages.length === 0) {
                 vscode.window.showErrorMessage('请在设置中启用至少一种您想要CLC分析的语言');
                 return;
@@ -850,7 +877,6 @@ export function activate(context: vscode.ExtensionContext) {
     const IgWatcher = vscode.workspace.createFileSystemWatcher('**/.codelinesignore');
     IgWatcher.onDidChange(() => {
         cachedIg = null; // 在每次用户更改忽略文件时清除缓存，下次分析时会重新加载规则
-        initializeTodayLines(context); // 重新初始化今日行数缓存，确保新规则生效
     });
     context.subscriptions.push(IgWatcher);
 
@@ -858,14 +884,17 @@ export function activate(context: vscode.ExtensionContext) {
     const changeListener = vscode.workspace.onDidChangeTextDocument(event => {
         const doc = event.document;
         if (!isSupportedDocument(doc)) {return;}
-        if (shouldIgnoreFile(doc)) {return;}
 
+        //无论是否为应该忽略的文件都更新这份被编辑文件的状态
         const uri = doc.uri.toString();
         const current = countNonBlankLines(doc.getText());
         const prev = docNonBlankLinesCache.get(uri) ?? 0;
         const delta = current - prev;
-        updateTodayLinesAdded(context, delta);
         docNonBlankLinesCache.set(uri, current);
+
+        if (!shouldIgnoreFile(doc)) {
+            updateTodayLinesAdded(context, delta);
+        }
     });
     context.subscriptions.push(changeListener);
 
@@ -904,8 +933,11 @@ export function activate(context: vscode.ExtensionContext) {
     // 恢复进度条状态
     const enabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
     const goal = context.globalState.get<number>(DAILY_GOAL_KEY, 0);
-    if (enabled && goal > 0) {updateProgressBar(context);}
-    else {statusBarItem.hide();}
+    if (enabled && goal > 0) {
+        updateProgressBar(context);
+    } else {
+        statusBarItem.hide();
+    }
 
     const exportCmd = vscode.commands.registerCommand('code-line-counter.exportToExcel', () => {
         exportToExcel(context);
