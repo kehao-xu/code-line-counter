@@ -110,6 +110,9 @@ const ALL_SUPPORTED_LANGUAGES = [
     { ext: 'py', lang: 'Python' },
     { ext: 'java', lang: 'Java' }
 ];
+let updateTimer;
+let pendingDoc = null;
+let ignoreFileDebounceTimer;
 /**
  * 获取工作区根目录
  * 如果打开的是多根工作区，默认使用第一个文件夹
@@ -123,7 +126,8 @@ function getWorkspaceRoot() {
 }
 /**
  * 加载忽略规则
- * 如果存在 .codelinesignore 文件，则使用该文件内容；
+ * 如果存在 .codelinesignore 文
+ * 件，则使用该文件内容；
  * 否则返回内置默认规则
  */
 function loadIgnoreRules(workspaceRoot) {
@@ -222,34 +226,6 @@ async function generateSmartIgnoreFile(workspaceRoot) {
         vscode.window.showErrorMessage(`写入文件失败: ${error}`);
     }
 }
-const docNonBlankLinesCache = new Map();
-/**
- * 获取当前日期的字符串表示，用作存储键
- */
-function getTodayDateStr() {
-    const now = new Date();
-    return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
-}
-/**
- * 获取今日已累计的代码行数（从全局状态中读取）
- */
-function getTodayLinesAdded(context) {
-    const key = `linesAdded_${getTodayDateStr()}`;
-    return context.globalState.get(key, 0);
-}
-/**
- * 判断文件扩展名是否属于支持的源代码文件
- */
-function isSupportedDocument(doc) {
-    const ext = path.extname(doc.fileName).toLowerCase();
-    return ['.c', '.cpp', '.py', '.java', '.h', '.hpp'].includes(ext);
-}
-/**
- * 计算一段文本中非空白行的数量
- */
-function countNonBlankLines(text) {
-    return text.split(/\r?\n/).filter(line => line.trim().length > 0).length;
-}
 // 缓存 ignore 实例，避免每次重复加载文件
 let cachedIg = null;
 let cachedWorkspaceRoot;
@@ -288,50 +264,33 @@ function shouldIgnoreFile(doc) {
     }
     return true;
 }
-async function initializeTodayLines(context) {
-    // 1. 检查工作区
-    const workspaceRoot = getWorkspaceRoot();
-    if (!workspaceRoot) {
-        vscode.window.showErrorMessage('请先打开一个工作区');
-        return;
-    }
-    // 2. 动态构建文件搜索模式
-    const extPattern = ALL_SUPPORTED_LANGUAGES.map(l => l.ext).join(',');
-    const pattern = `**/*.{${extPattern}}`;
-    // 3. 加载忽略规则并查找文件
-    const rules = DEFAULT_IGNORE_RULES;
-    const ig = (0, ignore_1.default)().add(rules);
-    const files = await vscode.workspace.findFiles(pattern);
-    if (files.length === 0) {
-        vscode.window.showErrorMessage('未找到任何符合条件的文件');
-        return;
-    }
-    const filteredFiles = files.filter(file => {
-        const absolutePath = file.fsPath;
-        const relativePath = path.relative(workspaceRoot, absolutePath);
-        const posixPath = relativePath.replace(/\\/g, '/'); // 统一为正斜杠
-        return !ig.ignores(posixPath);
-    });
-    if (filteredFiles.length === 0) {
-        vscode.window.showErrorMessage('所有文件均被忽略规则排除');
-        return;
-    }
-    for (const file of filteredFiles) {
-        const filePath = file.fsPath;
-        const ext = path.extname(filePath).toLowerCase().slice(1);
-        const langEntry = ALL_SUPPORTED_LANGUAGES.find(l => l.ext === ext);
-        if (!langEntry) {
-            continue;
-        }
-        try {
-            const uint8Array = await vscode.workspace.fs.readFile(file);
-            const TextContent = new TextDecoder('utf-8').decode(uint8Array);
-            docNonBlankLinesCache.set(file.toString(), countNonBlankLines(TextContent));
-        }
-        catch (err) {
-            vscode.window.showErrorMessage(`读取文件失败: ${filePath}`);
-        }
-    }
+const docNonBlankLinesCache = new Map();
+/**
+ * 获取当前日期的字符串表示，用作存储键
+ */
+function getTodayDateStr() {
+    const now = new Date();
+    return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+}
+/**
+ * 获取今日已累计的代码行数（从全局状态中读取）
+ */
+function getTodayLinesAdded(context) {
+    const key = `linesAdded_${getTodayDateStr()}`;
+    return context.globalState.get(key, 0);
+}
+/**
+ * 判断文件扩展名是否属于支持的源代码文件
+ */
+function isSupportedDocument(doc) {
+    const ext = path.extname(doc.fileName).toLowerCase();
+    return ['.c', '.cpp', '.py', '.java', '.h', '.hpp'].includes(ext);
+}
+/**
+ * 计算一段文本中非空白行的数量
+ */
+function countNonBlankLines(text) {
+    return text.split(/\r?\n/).filter(line => line.trim().length > 0).length;
 }
 /**
  * 更新今日累计行数（在文档变更事件中调用）
@@ -340,16 +299,32 @@ function updateTodayLinesAdded(context, delta) {
     const key = `linesAdded_${getTodayDateStr()}`;
     const current = getTodayLinesAdded(context);
     if (current + delta < 0) {
+        context.globalState.update(key, 0);
+        updateProgressBar(context);
         return;
     }
     context.globalState.update(key, current + delta);
     updateProgressBar(context);
 }
 /**
+ * 更新用户代码总数（自插件第一次激活以来）
+ */
+function updateUserTotalLines(context, delta) {
+    const current = context.globalState.get(USER_TOTAL_LINES_KEY, 0);
+    if (delta < 0) {
+        return;
+    }
+    context.globalState.update(USER_TOTAL_LINES_KEY, current + delta);
+    const has_grand_congrated = context.globalState.get(GRAND_CONGRAT_KEY, false);
+    if (current + delta > 30 && !has_grand_congrated) {
+        vscode.window.showInformationMessage(`Congratulations! You have written 10,000 lines of code!`);
+        context.globalState.update(GRAND_CONGRAT_KEY, true);
+    }
+}
+/**
  * 清空今日已累计行数
  */
 function resetTodayLines(context) {
-    initializeTodayLines(context);
     const key = `linesAdded_${getTodayDateStr()}`;
     context.globalState.update(key, 0);
     updateProgressBar(context);
@@ -357,6 +332,8 @@ function resetTodayLines(context) {
 // 全局状态存储键
 const PROGRESS_ENABLED_KEY = 'progressEnabled';
 const DAILY_GOAL_KEY = 'dailyGoal';
+const USER_TOTAL_LINES_KEY = 'userTotalLines';
+const GRAND_CONGRAT_KEY = 'grandCongrat';
 // 状态栏项
 let statusBarItem;
 /**
@@ -385,7 +362,7 @@ function updateProgressBar(context) {
     const alreadyCelebrated = context.globalState.get(celebratedKey, false);
     if (!alreadyCelebrated && todayLines >= goal) {
         context.globalState.update(celebratedKey, true);
-        vscode.window.showInformationMessage(`🎉 恭喜！今日已完成 ${goal} 行代码目标！ 🎉`);
+        vscode.window.showInformationMessage(`🎉 恭喜！今日已编写 ${goal} 行代码！ 🎉`);
     }
 }
 /**
@@ -404,10 +381,13 @@ function resetDailyGoalIfNeeded(context) {
  * 设置今日目标
  */
 async function setDailyGoal(context) {
-    resetDailyGoalIfNeeded(context);
     const input = await vscode.window.showInputBox({
         prompt: '请输入今日代码行目标（整数）',
         validateInput: (value) => {
+            if (value === "CLC") {
+                vscode.window.showInformationMessage(`[Greetings from CLC v0.0.3]Let's make progress together!`);
+                return null;
+            }
             const num = parseInt(value);
             if (isNaN(num) || num <= 0) {
                 return '请输入大于0的整数';
@@ -415,7 +395,7 @@ async function setDailyGoal(context) {
             return null;
         }
     });
-    if (!input) {
+    if (!input || input === "CLC") {
         return;
     }
     const goal = parseInt(input);
@@ -446,14 +426,7 @@ async function setDailyGoal(context) {
 async function switchProgressBar(context) {
     const enabled = context.globalState.get(PROGRESS_ENABLED_KEY, false);
     await context.globalState.update(PROGRESS_ENABLED_KEY, !enabled);
-    if (statusBarItem) {
-        if (!enabled) {
-            statusBarItem.show();
-        }
-        else {
-            statusBarItem.hide();
-        }
-    }
+    updateProgressBar(context);
     vscode.window.showInformationMessage(`进度条已${!enabled ? '显示' : '隐藏'}`);
 }
 function get_enabled_languages(context) {
@@ -600,7 +573,13 @@ async function exportToExcel(context) {
     }
 }
 function activate(context) {
-    console.log('Justinian of Code-Line-Counter says Hello!');
+    const first_time_activate = context.globalState.get('never_been_activated', true);
+    if (first_time_activate) {
+        console.log('Justinian of Code-Line-Counter says Hello!');
+        context.globalState.update('never_been_activated', false);
+    }
+    const user_total_lines = context.globalState.get(USER_TOTAL_LINES_KEY, 0);
+    resetDailyGoalIfNeeded(context);
     const disposableAnalyzeFile = vscode.commands.registerCommand('code-line-counter.analyzeCurrentFile', () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
@@ -689,7 +668,7 @@ function activate(context) {
         outputChannel.appendLine(`正在搜索文件...`);
         const files = await vscode.workspace.findFiles(pattern);
         if (files.length === 0) {
-            outputChannel.appendLine('未找到任何 C/C++/Python/Java 文件');
+            outputChannel.appendLine('未找到任何符合要求的源文件');
             outputChannel.show();
             return;
         }
@@ -790,46 +769,99 @@ function activate(context) {
         await generateSmartIgnoreFile(workspaceRoot);
     });
     context.subscriptions.push(disposableSmartGenerateIgnore);
-    // 初始化文档缓存
-    initializeTodayLines(context);
     const IgWatcher = vscode.workspace.createFileSystemWatcher('**/.codelinesignore');
     IgWatcher.onDidChange(() => {
-        cachedIg = null; // 在每次用户更改忽略文件时清除缓存，下次分析时会重新加载规则
+        // 清除之前的定时器
+        if (ignoreFileDebounceTimer) {
+            clearTimeout(ignoreFileDebounceTimer);
+        }
+        // 延迟后清除缓存
+        ignoreFileDebounceTimer = setTimeout(() => {
+            cachedIg = null;
+            ignoreFileDebounceTimer = undefined;
+        }, 300);
     });
     context.subscriptions.push(IgWatcher);
-    // 监听变更
+    vscode.workspace.textDocuments.forEach(doc => {
+        if (isSupportedDocument(doc)) {
+            const uri = doc.uri.toString();
+            const current = countNonBlankLines(doc.getText());
+            docNonBlankLinesCache.set(uri, current);
+        }
+    });
     const changeListener = vscode.workspace.onDidChangeTextDocument(event => {
         const doc = event.document;
         if (!isSupportedDocument(doc)) {
             return;
         }
-        //无论是否为应该忽略的文件都更新这份被编辑文件的状态
-        const uri = doc.uri.toString();
-        const current = countNonBlankLines(doc.getText());
-        const prev = docNonBlankLinesCache.get(uri) ?? 0;
-        const delta = current - prev;
-        docNonBlankLinesCache.set(uri, current);
-        if (!shouldIgnoreFile(doc)) {
-            updateTodayLinesAdded(context, delta);
+        // 清除之前的定时器，重新计时
+        if (updateTimer) {
+            clearTimeout(updateTimer);
         }
+        pendingDoc = doc;
+        updateTimer = setTimeout(() => {
+            if (pendingDoc) {
+                const uri = pendingDoc.uri.toString();
+                const current = countNonBlankLines(pendingDoc.getText());
+                const prev = docNonBlankLinesCache.get(uri);
+                if (prev !== undefined) {
+                    const delta = current - prev;
+                    docNonBlankLinesCache.set(uri, current);
+                    if (!shouldIgnoreFile(pendingDoc)) {
+                        updateTodayLinesAdded(context, delta);
+                        updateUserTotalLines(context, delta);
+                    }
+                }
+                else {
+                    console.warn(`缓存缺失：${uri}，已设置当前行数，但本次编辑不计入统计。`);
+                    docNonBlankLinesCache.set(uri, current);
+                }
+                updateTimer = undefined;
+                pendingDoc = null;
+            }
+        }, 300);
     });
     context.subscriptions.push(changeListener);
+    // 监听打开的文档
+    const openListener = vscode.workspace.onDidOpenTextDocument(doc => {
+        if (!isSupportedDocument(doc)) {
+            return;
+        }
+        const uri = doc.uri.toString();
+        const current = countNonBlankLines(doc.getText());
+        const prev = docNonBlankLinesCache.get(uri);
+        if (prev === undefined) {
+            docNonBlankLinesCache.set(uri, current);
+        }
+    });
+    context.subscriptions.push(openListener);
     // 监听关闭
     const closeListener = vscode.workspace.onDidCloseTextDocument(doc => {
+        if (pendingDoc === doc) {
+            // 如果文档正在等待更新，立即取消
+            if (updateTimer) {
+                clearTimeout(updateTimer);
+            }
+            updateTimer = undefined;
+            pendingDoc = null;
+        }
         docNonBlankLinesCache.delete(doc.uri.toString());
     });
     context.subscriptions.push(closeListener);
     // 状态栏项
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     context.subscriptions.push(statusBarItem);
+    const showTotalCommand = vscode.commands.registerCommand('code-line-counter.showTotalLines', () => {
+        const total = context.globalState.get(USER_TOTAL_LINES_KEY, 0);
+        vscode.window.showInformationMessage(`自安装插件以来，已经撰写了${total}行代码`);
+    });
+    context.subscriptions.push(showTotalCommand);
     // 可选：注册一个命令，让用户可以查看今日代码量
     const showCommand = vscode.commands.registerCommand('code-line-counter.showTodayLines', () => {
         const lines = getTodayLinesAdded(context);
         vscode.window.showInformationMessage(`今日已写 ${lines} 行代码`);
     });
     context.subscriptions.push(showCommand);
-    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    context.subscriptions.push(statusBarItem);
     // 注册设置目标命令
     const setGoalCmd = vscode.commands.registerCommand('code-line-counter.setDailyGoal', () => {
         setDailyGoal(context);
@@ -860,6 +892,7 @@ function activate(context) {
             vscode.window.showInformationMessage('今日累计行数已重置');
         }
     });
+    context.subscriptions.push(resetCmd);
 }
 // 文件分析函数（根据文件扩展名选择解析器）
 function analyzeFile(content, ext) {
@@ -930,5 +963,12 @@ function analyzeFile(content, ext) {
     };
 }
 // This method is called when your extension is deactivated
-function deactivate() { }
+function deactivate() {
+    if (updateTimer) {
+        clearTimeout(updateTimer);
+    }
+    if (ignoreFileDebounceTimer) {
+        clearTimeout(ignoreFileDebounceTimer);
+    }
+}
 //# sourceMappingURL=extension.js.map

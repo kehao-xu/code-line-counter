@@ -85,6 +85,10 @@
         "title": "CLC: Show Today's Number of Lines"
       },
       {
+        "command": "code-line-counter.showTotalLines",
+        "title": "CLC: Show Total Lines"
+      },
+      {
         "command": "code-line-counter.setDailyGoal",
         "title": "CLC: Set Today's Goal"
       },
@@ -139,6 +143,10 @@
         },
         {
           "command": "code-line-counter.showTodayLines",
+          "group": "3_progress"
+        },
+        {
+          "command": "code-line-counter.showTotalLines",
           "group": "3_progress"
         },
         {
