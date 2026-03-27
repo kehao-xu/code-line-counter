@@ -316,7 +316,7 @@ function updateUserTotalLines(context, delta) {
     }
     context.globalState.update(USER_TOTAL_LINES_KEY, current + delta);
     const has_grand_congrated = context.globalState.get(GRAND_CONGRAT_KEY, false);
-    if (current + delta > 30 && !has_grand_congrated) {
+    if (current + delta > 10000 && !has_grand_congrated) {
         vscode.window.showInformationMessage(`Congratulations! You have written 10,000 lines of code!`);
         context.globalState.update(GRAND_CONGRAT_KEY, true);
     }
@@ -578,7 +578,6 @@ function activate(context) {
         console.log('Justinian of Code-Line-Counter says Hello!');
         context.globalState.update('never_been_activated', false);
     }
-    const user_total_lines = context.globalState.get(USER_TOTAL_LINES_KEY, 0);
     resetDailyGoalIfNeeded(context);
     const disposableAnalyzeFile = vscode.commands.registerCommand('code-line-counter.analyzeCurrentFile', () => {
         const editor = vscode.window.activeTextEditor;
