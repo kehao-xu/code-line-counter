@@ -4,6 +4,14 @@
   "description": "an extension that provides basic analysis of codes by c/c++, python or java",
   "version": "0.0.4",
   "publisher": "JustinianXU",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kehao-XU/code-line-counter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Kehao-XU/code-line-counter/issues"
+  },
+  "homepage": "https://github.com/Kehao-XU/code-line-counter#readme",
   "icon":"./icon.jpg",
   "engines": {
     "vscode": "^1.100.0"
