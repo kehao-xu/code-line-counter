@@ -3,6 +3,8 @@
   "displayName": "code-line-counter",
   "description": "an extension that provides basic analysis of codes by c/c++, python or java",
   "version": "0.0.4",
+  "publisher": "JustinianXU",
+  "icon":"./icon.jpg",
   "engines": {
     "vscode": "^1.100.0"
   },
