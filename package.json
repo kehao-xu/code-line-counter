@@ -2,8 +2,9 @@
   "name": "code-line-counter",
   "displayName": "code-line-counter",
   "description": "an extension that provides basic analysis of codes by c/c++, python or java",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "publisher": "JustinianXU",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Kehao-XU/code-line-counter.git"
@@ -12,7 +13,7 @@
     "url": "https://github.com/Kehao-XU/code-line-counter/issues"
   },
   "homepage": "https://github.com/Kehao-XU/code-line-counter#readme",
-  "icon":"./icon.jpg",
+  "icon": "./icon.jpg",
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -22,7 +23,7 @@
   "activationEvents": [
     "onStartupFinished"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
       "title": "Code Line Counter",
@@ -70,6 +71,70 @@
             }
           },
           "additionalProperties": false
+        },
+        "code-line-counter.progressBarStyle": {
+          "type": "object",
+          "title": "进度条样式",
+          "description": "自定义状态栏进度条的显示外观",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "default",
+                "circle",
+                "block",
+                "simple",
+                "custom"
+              ],
+              "enumDescriptions": [
+                "默认样式：█ ░，长度 10",
+                "圆圈样式：⬤ ○，长度 10",
+                "方块样式：■ □，长度 10",
+                "简洁样式：仅显示百分比和数字（无条形）",
+                "自定义字符（需设置 fillChar 和 emptyChar）"
+              ],
+              "default": "default",
+              "description": "进度条类型"
+            },
+            "length": {
+              "type": "number",
+              "minimum": 5,
+              "maximum": 30,
+              "default": 10,
+              "description": "进度条长度（对 simple 类型无效）"
+            },
+            "fillChar": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1,
+              "default": "█",
+              "description": "填充字符（仅当 type 为 custom 时使用）"
+            },
+            "emptyChar": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1,
+              "default": "░",
+              "description": "空白字符（仅当 type 为 custom 时使用）"
+            },
+            "showPercentage": {
+              "type": "boolean",
+              "default": true,
+              "description": "是否显示百分比"
+            },
+            "showNumbers": {
+              "type": "boolean",
+              "default": true,
+              "description": "是否显示已完成/目标数值"
+            }
+          },
+          "additionalProperties": false
+        },
+        "code-line-counter.celebrationMessage": {
+          "type": "string",
+          "default": "🎉 恭喜！今日已编写 {goal} 行代码！ 🎉",
+          "description": "达到每日目标时显示的消息，支持变量 {goal}（目标行数）和 {lines}（实际行数）",
+          "maxLength": 200
         }
       }
     },
@@ -112,7 +177,11 @@
       },
       {
         "command": "code-line-counter.exportToExcel",
-        "title": "CLC: Export to Excel"
+        "title": "CLC: Export Analysis to Excel"
+      },
+      {
+        "command": "code-line-counter.exportToMarkdown",
+        "title": "CLC: Export Analysis to Markdown"
       }
     ],
     "submenus": [
@@ -174,6 +243,10 @@
         {
           "command": "code-line-counter.exportToExcel",
           "group": "4_export"
+        },
+        {
+          "command": "code-line-counter.exportToMarkdown",
+          "group": "4_export"
         }
       ]
     },
@@ -205,19 +278,22 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "pnpm run compile && pnpm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test"
+    "compile": "npm run check-types && node esbuild.js",
+    "check-types": "tsc --noEmit",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "vscode:prepublish": "npm run package",
+    "package": "npm run check-types && node esbuild.js --production"
   },
+
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/vscode": "^1.100.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.27.4",
     "eslint": "^9.39.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1"

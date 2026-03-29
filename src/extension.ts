@@ -77,6 +77,15 @@ const ALL_SUPPORTED_LANGUAGES: { ext: string; lang: string }[] = [
         {ext: 'java', lang: 'Java'}
     ];
 
+interface ProgressBarStyle {
+    type: 'default' | 'circle' | 'block' | 'simple' | 'custom';
+    length: number;
+    fillChar: string;
+    emptyChar: string;
+    showPercentage: boolean;
+    showNumbers: boolean;
+}
+
 let updateTimer: NodeJS.Timeout | undefined;
 let pendingDoc: vscode.TextDocument | null = null;
 let ignoreFileDebounceTimer: NodeJS.Timeout | undefined;
@@ -251,6 +260,7 @@ function shouldIgnoreFile(doc: vscode.TextDocument): boolean {
     return true;
 }
 
+
 const docNonBlankLinesCache = new Map<string, number>();
 
 /**
@@ -333,9 +343,65 @@ const GRAND_CONGRAT_KEY = 'grandCongrat';
 // 状态栏项
 let statusBarItem: vscode.StatusBarItem;
 
-/**
- * 更新状态栏进度条
- */
+function getProgressBarStyle(): ProgressBarStyle {
+    const config = vscode.workspace.getConfiguration('code-line-counter');
+    const styleConfig = config.get<any>('progressBarStyle', {});
+    return {
+        type: styleConfig.type ?? 'default',
+        length: Math.min(30, Math.max(5, styleConfig.length ?? 10)),
+        fillChar: styleConfig.fillChar ?? '█',
+        emptyChar: styleConfig.emptyChar ?? '░',
+        showPercentage: styleConfig.showPercentage ?? true,
+        showNumbers: styleConfig.showNumbers ?? true,
+    };
+}
+
+function getCelebrationMessage(): string {
+    const config = vscode.workspace.getConfiguration('code-line-counter');
+    return config.get<string>('celebrationMessage', '🎉 恭喜！今日已编写 {goal} 行代码！ 🎉');
+}
+
+function generateProgressBar(todayLines: number, goal: number, style: ProgressBarStyle): string {
+    if (goal <= 0) {return '';}
+
+    const percent = Math.min(100, Math.floor((todayLines / goal) * 100));
+    const barLength = style.length;
+
+    let fillChar: string, emptyChar: string;
+    switch (style.type) {
+        case 'circle':
+            fillChar = '⬤';
+            emptyChar = '○';
+            break;
+        case 'block':
+            fillChar = '■';
+            emptyChar = '□';
+            break;
+        case 'custom':
+            fillChar = style.fillChar;
+            emptyChar = style.emptyChar;
+            break;
+        default:
+            fillChar = '█';
+            emptyChar = '░';
+    }
+
+    let bar = '';
+    if (style.type !== 'simple') {
+        const filled = Math.floor(percent / (100 / barLength));
+        const empty = barLength - filled;
+        bar = fillChar.repeat(filled) + emptyChar.repeat(empty);
+    }
+
+    const parts: string[] = [];
+    if (bar) {parts.push(bar);}
+    if (style.showNumbers) {parts.push(`${todayLines}/${goal}`);}
+    if (style.showPercentage) {parts.push(`${percent}%`);}
+
+    const icon = '$(pulse)';
+    return `${icon} ${parts.join(' ')}`.trim();
+}
+
 function updateProgressBar(context: vscode.ExtensionContext) {
     if (!statusBarItem) {return;}
 
@@ -348,13 +414,10 @@ function updateProgressBar(context: vscode.ExtensionContext) {
     }
 
     const todayLines = getTodayLinesAdded(context);
-    const percent = Math.min(100, Math.floor((todayLines / goal) * 100));
-    const barLength = 10;
-    const filled = Math.floor(percent / 10);
-    const empty = barLength - filled;
-    const bar = '█'.repeat(filled) + '░'.repeat(empty);
+    const style = getProgressBarStyle();
+    const barText = generateProgressBar(todayLines, goal, style);
 
-    statusBarItem.text = `$(pulse) ${bar} ${todayLines}/${goal} lines (${percent}%)`;
+    statusBarItem.text = barText;
     statusBarItem.tooltip = `今日已写 ${todayLines} 行，目标 ${goal} 行`;
     statusBarItem.show();
 
@@ -362,7 +425,11 @@ function updateProgressBar(context: vscode.ExtensionContext) {
     const alreadyCelebrated = context.globalState.get<boolean>(celebratedKey, false);
     if (!alreadyCelebrated && todayLines >= goal) {
         context.globalState.update(celebratedKey, true);
-        vscode.window.showInformationMessage(`🎉 恭喜！今日已编写 ${goal} 行代码！ 🎉`);
+        const messageTemplate = getCelebrationMessage();
+        const message = messageTemplate
+            .replace(/\{goal\}/g, goal.toString())
+            .replace(/\{lines\}/g, todayLines.toString());
+        vscode.window.showInformationMessage(message);
     }
 }
 
@@ -457,37 +524,36 @@ function get_enabled_languages(context: vscode.ExtensionContext) {
     return enabledLanguages;
 }
 
-/**
- * 导出工作区统计结果为 Excel 文件
- */
-async function exportToExcel(context: vscode.ExtensionContext) {
+interface WorkspaceStats {
+    langStats: { [lang: string]: { files: number; totalLines: number; codeLines: number; commentLines: number; blankLines: number } };
+    totalStats: { files: number; totalLines: number; codeLines: number; commentLines: number; blankLines: number };
+    fileDetails: any[];
+}
+
+async function collectWorkspaceStats(context: vscode.ExtensionContext): Promise<WorkspaceStats | undefined> {
     const workspaceRoot = getWorkspaceRoot();
     if (!workspaceRoot) {
         vscode.window.showErrorMessage('请先打开一个工作区');
-        return;
+        return undefined;
     }
 
-    // 1. 获取用户配置的语言（与 analyzeWorkspace 一致）
-    const enabledLanguages: { ext: string; lang: string }[] = get_enabled_languages(context);
+    const enabledLanguages = get_enabled_languages(context);
     if (enabledLanguages.length === 0) {
         vscode.window.showErrorMessage('请在设置中启用至少一种语言');
-        return;
+        return undefined;
     }
 
-    // 2. 构建文件模式并搜索文件
     const extPattern = enabledLanguages.map(l => l.ext).join(',');
     const pattern = `**/*.{${extPattern}}`;
     const files = await vscode.workspace.findFiles(pattern);
     if (files.length === 0) {
         vscode.window.showErrorMessage('未找到任何符合条件的文件');
-        return;
+        return undefined;
     }
 
-    // 3. 加载忽略规则
     const rules = loadIgnoreRules(workspaceRoot);
     const ig = ignore().add(rules);
 
-    // 4. 过滤文件
     const filteredFiles = files.filter(file => {
         const absolutePath = file.fsPath;
         const relativePath = path.relative(workspaceRoot, absolutePath);
@@ -497,25 +563,14 @@ async function exportToExcel(context: vscode.ExtensionContext) {
 
     if (filteredFiles.length === 0) {
         vscode.window.showErrorMessage('所有文件均被忽略规则排除');
-        return;
+        return undefined;
     }
 
-    // 5. 准备统计数据
-    interface LangStats {
-        files: number;
-        totalLines: number;
-        codeLines: number;
-        commentLines: number;
-        blankLines: number;
-    }
-
-    const langStats: { [lang: string]: LangStats } = {};
+    const langStats: { [lang: string]: any } = {};
     for (const lang of enabledLanguages) {
         langStats[lang.lang] = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
     }
-    let totalStats: LangStats = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
-
-    // 存储每个文件的详细统计（用于导出）
+    let totalStats = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
     const fileDetails: any[] = [];
 
     for (const file of filteredFiles) {
@@ -528,7 +583,6 @@ async function exportToExcel(context: vscode.ExtensionContext) {
             const content = fs.readFileSync(filePath, 'utf-8');
             const stats = analyzeFile(content, `.${ext}`);
 
-            // 更新语言统计
             const lang = langEntry.lang;
             langStats[lang].files++;
             langStats[lang].totalLines += stats.totalLines;
@@ -536,14 +590,12 @@ async function exportToExcel(context: vscode.ExtensionContext) {
             langStats[lang].commentLines += stats.commentLines;
             langStats[lang].blankLines += stats.blankLines;
 
-            // 更新总统计
             totalStats.files++;
             totalStats.totalLines += stats.totalLines;
             totalStats.codeLines += stats.codeLines;
             totalStats.commentLines += stats.commentLines;
             totalStats.blankLines += stats.blankLines;
 
-            // 保存文件详情
             fileDetails.push({
                 '文件路径': path.relative(workspaceRoot, filePath),
                 '语言': lang,
@@ -557,28 +609,34 @@ async function exportToExcel(context: vscode.ExtensionContext) {
         }
     }
 
-    // 6. 构建 Excel 工作簿
+    return { langStats, totalStats, fileDetails };
+}
+
+async function exportToExcel(context: vscode.ExtensionContext) {
+    const stats = await collectWorkspaceStats(context);
+    if (!stats) {return;}
+
+    const { langStats, totalStats, fileDetails } = stats;
+
     const workbook = XLSX.utils.book_new();
 
-    // 工作表1：语言统计汇总
+    // 语言统计汇总
     const langSummaryData: any[] = [['语言', '文件数', '总行数', '代码行', '注释行', '空行']];
-    for (const [lang, stats] of Object.entries(langStats)) {
-        if (stats.files === 0) {continue;}
-        langSummaryData.push([lang, stats.files, stats.totalLines, stats.codeLines, stats.commentLines, stats.blankLines]);
+    for (const [lang, s] of Object.entries(langStats)) {
+        if (s.files === 0) {continue;}
+        langSummaryData.push([lang, s.files, s.totalLines, s.codeLines, s.commentLines, s.blankLines]);
     }
-    // 添加总计行
     langSummaryData.push(['总计', totalStats.files, totalStats.totalLines, totalStats.codeLines, totalStats.commentLines, totalStats.blankLines]);
-
     const langSheet = XLSX.utils.aoa_to_sheet(langSummaryData);
     XLSX.utils.book_append_sheet(workbook, langSheet, '语言统计');
 
-    // 工作表2：文件详情
+    // 文件详情
     if (fileDetails.length > 0) {
         const fileSheet = XLSX.utils.json_to_sheet(fileDetails);
         XLSX.utils.book_append_sheet(workbook, fileSheet, '文件详情');
     }
 
-    // 7. 选择保存位置
+    const workspaceRoot = getWorkspaceRoot()!;
     const defaultFileName = `code-line-stats-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.xlsx`;
     const uri = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.join(workspaceRoot, defaultFileName)),
@@ -586,9 +644,59 @@ async function exportToExcel(context: vscode.ExtensionContext) {
     });
     if (!uri) {return;}
 
-    // 8. 写入文件
     try {
         const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+        await vscode.workspace.fs.writeFile(uri, buffer);
+        vscode.window.showInformationMessage(`统计结果已导出到 ${path.basename(uri.fsPath)}`);
+    } catch (err) {
+        vscode.window.showErrorMessage(`导出失败: ${err}`);
+    }
+}
+
+/**
+ * 导出统计结果到markdown文件
+ * @param context 
+ */
+async function exportToMarkdown(context: vscode.ExtensionContext) {
+    const stats = await collectWorkspaceStats(context);
+    if (!stats) {return;}
+
+    const { langStats, totalStats, fileDetails } = stats;
+    const workspaceRoot = getWorkspaceRoot()!;
+
+    // 构建 Markdown 内容
+    let markdown = `# Code Line Counter 统计报告\n\n`;
+    markdown += `生成时间：${new Date().toLocaleString()}\n\n`;
+
+    // 按语言统计表格
+    markdown += `## 按语言统计\n\n`;
+    markdown += `| 语言 | 文件数 | 总行数 | 代码行 | 注释行 | 空行 |\n`;
+    markdown += `|------|--------|--------|--------|--------|------|\n`;
+    for (const [lang, s] of Object.entries(langStats)) {
+        if (s.files === 0) {continue;}
+        markdown += `| ${lang} | ${s.files} | ${s.totalLines} | ${s.codeLines} | ${s.commentLines} | ${s.blankLines} |\n`;
+    }
+    // 总计行
+    markdown += `| **总计** | **${totalStats.files}** | **${totalStats.totalLines}** | **${totalStats.codeLines}** | **${totalStats.commentLines}** | **${totalStats.blankLines}** |\n\n`;
+
+    // 文件详情表格
+    markdown += `## 文件详情\n\n`;
+    markdown += `| 文件路径 | 语言 | 总行数 | 代码行 | 注释行 | 空行 |\n`;
+    markdown += `|----------|------|--------|--------|--------|------|\n`;
+    for (const detail of fileDetails) {
+        markdown += `| ${detail['文件路径']} | ${detail['语言']} | ${detail['总行数']} | ${detail['代码行']} | ${detail['注释行']} | ${detail['空行']} |\n`;
+    }
+
+    // 选择保存路径
+    const defaultFileName = `code-line-stats-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.md`;
+    const uri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(workspaceRoot, defaultFileName)),
+        filters: { 'Markdown 文件': ['md'] }
+    });
+    if (!uri) {return;}
+
+    try {
+        const buffer = Buffer.from(markdown, 'utf-8');
         await vscode.workspace.fs.writeFile(uri, buffer);
         vscode.window.showInformationMessage(`统计结果已导出到 ${path.basename(uri.fsPath)}`);
     } catch (err) {
@@ -954,6 +1062,19 @@ export function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(switchProgressCmd);
 
+        // 监听配置变化，实时更新进度条样式和庆祝消息
+    const configChangeListener = vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('code-line-counter.progressBarStyle') ||
+            event.affectsConfiguration('code-line-counter.celebrationMessage')) {
+            const enabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
+            const goal = context.globalState.get<number>(DAILY_GOAL_KEY, 0);
+            if (enabled && goal > 0) {
+                updateProgressBar(context);
+            }
+        }
+    });
+    context.subscriptions.push(configChangeListener);
+
     // 恢复进度条状态
     const enabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
     const goal = context.globalState.get<number>(DAILY_GOAL_KEY, 0);
@@ -963,10 +1084,15 @@ export function activate(context: vscode.ExtensionContext) {
         statusBarItem.hide();
     }
 
-    const exportCmd = vscode.commands.registerCommand('code-line-counter.exportToExcel', () => {
+    const exportExcelCmd = vscode.commands.registerCommand('code-line-counter.exportToExcel', () => {
         exportToExcel(context);
     });
-    context.subscriptions.push(exportCmd);
+    context.subscriptions.push(exportExcelCmd);
+
+    const exportMarkdownCmd = vscode.commands.registerCommand('code-line-counter.exportToMarkdown', () => {
+        exportToMarkdown(context);
+    });
+    context.subscriptions.push(exportMarkdownCmd);
 
     const resetCmd = vscode.commands.registerCommand('code-line-counter.resetTodayLines', 
         async() => {
@@ -979,60 +1105,100 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(resetCmd);
 }
 
-// 文件分析函数（根据文件扩展名选择解析器）
 function analyzeFile(content: string, ext: string): any {
-	
-	const lines = content.split(/\r?\n/);
+    const lines = content.split(/\r?\n/);
     let totalLines = lines.length;
     let codeLines = 0;
     let commentLines = 0;
     let blankLines = 0;
-    
-    // 根据扩展名设置注释规则
+
     let singleLineComment: string[] = [];
-    let multiLineCommentStart = '';
-    let multiLineCommentEnd = '';
-    
+    let multiLineCommentStart: string[] = [];
+    let multiLineCommentEnd: string[] = [];
+
     if (ext === '.c' || ext === '.cpp' || ext === '.java' || ext === '.h' || ext === '.hpp') {
         singleLineComment = ['//'];
-        multiLineCommentStart = '/*';
-        multiLineCommentEnd = '*/';
+        multiLineCommentStart = ['/*'];
+        multiLineCommentEnd = ['*/'];
     } else if (ext === '.py') {
         singleLineComment = ['#'];
-        multiLineCommentStart = '"""';
-        multiLineCommentEnd = '"""';
+        multiLineCommentStart = ['"""', "'''"];
+        multiLineCommentEnd = ['"""', "'''"];
     }
-    
+
     let inMultiLineComment = false;
-    
+    let idx = 0;
+
     for (let line of lines) {
         const trimmed = line.trim();
-        
-        // 空行判断
+
+        // 空行
         if (trimmed === '') {
             blankLines++;
             continue;
         }
-        
-        // 处理多行注释（简单实现，不考虑字符串内等复杂情况）
-        if (!inMultiLineComment && multiLineCommentStart && trimmed.startsWith(multiLineCommentStart)) {
-            inMultiLineComment = true;
-            // 如果这一行同时结束（如 /* comment */）
-            if (multiLineCommentEnd && trimmed.includes(multiLineCommentEnd)) {
-                inMultiLineComment = false;
+
+        // 处理多行注释
+        if (!inMultiLineComment) {
+            let foundStart = false;
+            for (let i = 0; i < multiLineCommentStart.length; i++) {
+                const startDelim = multiLineCommentStart[i];
+                const endDelim = multiLineCommentEnd[i];
+                if (trimmed.startsWith(startDelim)) {
+                    const afterStart = trimmed.slice(startDelim.length).trim();
+                    idx = i;
+                    // 情况1：该行只有开始符（无其他内容）
+                    /*
+                    if (afterStart === '') {
+                        inMultiLineComment = true;
+                        currentMultiLineDelimiter = startDelim;
+                        foundStart = true;
+                        blankLines++;
+                        // 计入空白行
+                        break;
+                    }
+                        */
+                    // 情况2：开始符后还有其他内容，可能包含结束符
+                    if (afterStart.includes(endDelim)) {
+                        // 同一行内开始并结束，且包含注释内容，计入注释行
+                        commentLines++;
+                        foundStart = true;
+                        break;
+                    } else {
+                        // 进入多行注释，当前行有注释内容，计入注释行
+                        inMultiLineComment = true;
+                        foundStart = true;
+                        commentLines++;
+                        break;
+                    }
+                }
             }
+            if (foundStart) {continue;}
+        } else {
+            // 在多行注释中
+            const endDelim = multiLineCommentEnd[idx];
+            if (trimmed.includes(endDelim)) {
+                // 检查该行是否只有结束符
+                /*
+                const afterEnd = trimmed.replace(endDelim, '').trim();
+                if (afterEnd === '') {
+                    // 只有结束符，计入空白行
+                    inMultiLineComment = false;
+                    currentMultiLineDelimiter = '';
+                    blankLines++;
+                    continue;
+                }
+                    */
+                // 该行有结束符和注释内容（可能在结束符前后）
+                commentLines++;
+                inMultiLineComment = false;
+                continue;
+            }
+            // 普通注释内容行
             commentLines++;
             continue;
         }
-        
-        if (inMultiLineComment) {
-            commentLines++;
-            if (multiLineCommentEnd && trimmed.includes(multiLineCommentEnd)) {
-                inMultiLineComment = false;
-            }
-            continue;
-        }
-        
+
         // 单行注释
         let isComment = false;
         for (const sym of singleLineComment) {
@@ -1045,11 +1211,11 @@ function analyzeFile(content: string, ext: string): any {
             commentLines++;
             continue;
         }
-        
-        // 其余算代码行
+
+        // 其余为代码行
         codeLines++;
     }
-    
+
     return {
         totalLines,
         codeLines,
