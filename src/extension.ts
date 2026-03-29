@@ -573,40 +573,55 @@ async function collectWorkspaceStats(context: vscode.ExtensionContext): Promise<
     let totalStats = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
     const fileDetails: any[] = [];
 
-    for (const file of filteredFiles) {
+    // 并发读取文件
+    const filePromises = filteredFiles.map(async (file) => {
         const filePath = file.fsPath;
         const ext = path.extname(filePath).toLowerCase().slice(1);
         const langEntry = enabledLanguages.find(l => l.ext === ext);
-        if (!langEntry) {continue;}
+        if (!langEntry) {return null;}
 
         try {
-            const content = fs.readFileSync(filePath, 'utf-8');
+            const uint8Array = await vscode.workspace.fs.readFile(file);
+            const content = new TextDecoder('utf-8').decode(uint8Array);
             const stats = analyzeFile(content, `.${ext}`);
-
-            const lang = langEntry.lang;
-            langStats[lang].files++;
-            langStats[lang].totalLines += stats.totalLines;
-            langStats[lang].codeLines += stats.codeLines;
-            langStats[lang].commentLines += stats.commentLines;
-            langStats[lang].blankLines += stats.blankLines;
-
-            totalStats.files++;
-            totalStats.totalLines += stats.totalLines;
-            totalStats.codeLines += stats.codeLines;
-            totalStats.commentLines += stats.commentLines;
-            totalStats.blankLines += stats.blankLines;
-
-            fileDetails.push({
-                '文件路径': path.relative(workspaceRoot, filePath),
-                '语言': lang,
-                '总行数': stats.totalLines,
-                '代码行': stats.codeLines,
-                '注释行': stats.commentLines,
-                '空行': stats.blankLines
-            });
+            return {
+                lang: langEntry.lang,
+                stats,
+                relativePath: path.relative(workspaceRoot, filePath)
+            };
         } catch (err) {
             console.error(`读取文件失败: ${filePath}`, err);
+            return null;
         }
+    });
+
+    const results = await Promise.all(filePromises);
+
+    // 聚合结果
+    for (const result of results) {
+        if (!result) {continue;}
+        const { lang, stats, relativePath } = result;
+
+        langStats[lang].files++;
+        langStats[lang].totalLines += stats.totalLines;
+        langStats[lang].codeLines += stats.codeLines;
+        langStats[lang].commentLines += stats.commentLines;
+        langStats[lang].blankLines += stats.blankLines;
+
+        totalStats.files++;
+        totalStats.totalLines += stats.totalLines;
+        totalStats.codeLines += stats.codeLines;
+        totalStats.commentLines += stats.commentLines;
+        totalStats.blankLines += stats.blankLines;
+
+        fileDetails.push({
+            '文件路径': relativePath,
+            '语言': lang,
+            '总行数': stats.totalLines,
+            '代码行': stats.codeLines,
+            '注释行': stats.commentLines,
+            '空行': stats.blankLines
+        });
     }
 
     return { langStats, totalStats, fileDetails };
@@ -744,7 +759,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(disposableAnalyzeFile);
 
-    const disposableAnalyzeWorkspace = vscode.commands.registerCommand(
+        const disposableAnalyzeWorkspace = vscode.commands.registerCommand(
         'code-line-counter.analyzeWorkspace',
         async () => {
             // 1. 检查工作区
@@ -775,7 +790,6 @@ export function activate(context: vscode.ExtensionContext) {
             const hasIgnoreFile = fs.existsSync(ignoreFilePath);
 
             if (!hasIgnoreFile) {
-                // 无忽略文件，询问是否基于当前项目生成
                 const answer = await vscode.window.showInformationMessage(
                     '未找到 .codelinesignore 忽略文件，是否基于当前项目生成一个？',
                     '生成', '暂不生成'
@@ -785,11 +799,9 @@ export function activate(context: vscode.ExtensionContext) {
                     outputChannel.appendLine('已生成 .codelinesignore 文件。');
                 }
             } else {
-                // 有忽略文件，检测是否有新增的常见目录未在规则中
-                const currentRules = loadIgnoreRules(workspaceRoot); // 临时加载用于检测
+                const currentRules = loadIgnoreRules(workspaceRoot);
                 const existingDirRules = currentRules.filter(r => r.endsWith('/'));
 
-                // 获取当前实际存在的常见目录（来自默认规则列表）
                 const existingDirs: string[] = [];
                 for (const dir of DEFAULT_IGNORE_RULES.filter(r => r.endsWith('/'))) {
                     const dirPath = path.join(workspaceRoot, dir.replace(/\/$/, ''));
@@ -798,17 +810,14 @@ export function activate(context: vscode.ExtensionContext) {
                     }
                 }
 
-                // 找出存在但规则中缺失的目录
                 const missingDirs = existingDirs.filter(dir => !existingDirRules.includes(dir));
                 if (missingDirs.length > 0) {
-                    // 限制显示数量，避免消息过长
                     const displayDirs = missingDirs.slice(0, 3).join(', ') + (missingDirs.length > 3 ? '等' : '');
                     const answer = await vscode.window.showInformationMessage(
                         `检测到项目中存在可能需要忽略的新目录：${displayDirs}，是否将这些目录添加到 .codelinesignore 中？`,
                         '添加规则', '暂不添加'
                     );
                     if (answer === '添加规则') {
-                        // 追加到文件末尾
                         const content = fs.readFileSync(ignoreFilePath, 'utf-8');
                         const newContent = content + (content.endsWith('\n') ? '' : '\n') + missingDirs.join('\n');
                         fs.writeFileSync(ignoreFilePath, newContent, 'utf-8');
@@ -818,104 +827,40 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             }
 
-            // 6. 加载最终使用的忽略规则
-            outputChannel.appendLine('正在加载忽略规则...');
-            const rules = loadIgnoreRules(workspaceRoot);
-            const ig = ignore().add(rules);
-            outputChannel.appendLine(`忽略规则: ${rules.length} 条`);
-
-            // 7. 查找所有目标文件
-            outputChannel.appendLine(`正在搜索文件...`);
-            const files = await vscode.workspace.findFiles(pattern);
-
-            if (files.length === 0) {
-                outputChannel.appendLine('未找到任何符合要求的源文件');
+            // 6. 收集统计数据（复用 collectWorkspaceStats）
+            const stats = await collectWorkspaceStats(context);
+            if (!stats) {
+                outputChannel.appendLine('统计失败，请检查控制台。');
                 outputChannel.show();
                 return;
             }
 
-            // 8. 过滤文件（应用忽略规则）
-            const filteredFiles = files.filter(file => {
-                const absolutePath = file.fsPath;
-                const relativePath = path.relative(workspaceRoot, absolutePath);
-                const posixPath = relativePath.replace(/\\/g, '/'); // 统一为正斜杠
-                return !ig.ignores(posixPath);
-            });
+            const { langStats, totalStats, fileDetails } = stats;
 
-            outputChannel.appendLine(`找到 ${files.length} 个文件，忽略后剩余 ${filteredFiles.length} 个`);
+            // 7. 输出每个文件的详细统计
+            outputChannel.appendLine(`找到 ${fileDetails.length} 个文件，忽略后剩余 ${fileDetails.length} 个`);
             outputChannel.appendLine(`---------------`);
-
-            if (filteredFiles.length === 0) {
-                outputChannel.appendLine('所有文件均被忽略规则排除');
-                outputChannel.show();
-                return;
+            for (const detail of fileDetails) {
+                outputChannel.appendLine(`${detail['文件路径']}:`);
+                outputChannel.appendLine(`  总行数: ${detail['总行数']}`);
+                outputChannel.appendLine(`  代码行: ${detail['代码行']}`);
+                outputChannel.appendLine(`  注释行: ${detail['注释行']}`);
+                outputChannel.appendLine(`  空行: ${detail['空行']}\n`);
             }
 
-            // 定义语言统计类型
-            interface LangStats {
-                files: number;
-                totalLines: number;
-                codeLines: number;
-                commentLines: number;
-                blankLines: number;
-            }
-
-            const langStats: { [lang: string]: LangStats } = {};
-            for (const lang of enabledLanguages) {
-                langStats[lang.lang] = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
-            }
-            let totalStats: LangStats = { files: 0, totalLines: 0, codeLines: 0, commentLines: 0, blankLines: 0 };
-
-            // 9. 统计文件
-            for (const file of filteredFiles) {
-                const filePath = file.fsPath;
-                const ext = path.extname(filePath).toLowerCase().slice(1); // 去掉点
-                const langEntry = enabledLanguages.find(l => l.ext === ext);
-                if (!langEntry) {continue;}
-
-                try {
-                    const content = fs.readFileSync(filePath, 'utf-8');
-                    const stats = analyzeFile(content, `.${ext}`);
-
-                    // 更新语言统计
-                    const lang = langEntry.lang;
-                    langStats[lang].files++;
-                    langStats[lang].totalLines += stats.totalLines;
-                    langStats[lang].codeLines += stats.codeLines;
-                    langStats[lang].commentLines += stats.commentLines;
-                    langStats[lang].blankLines += stats.blankLines;
-
-                    // 更新总统计
-                    totalStats.files++;
-                    totalStats.totalLines += stats.totalLines;
-                    totalStats.codeLines += stats.codeLines;
-                    totalStats.commentLines += stats.commentLines;
-                    totalStats.blankLines += stats.blankLines;
-
-                    // 输出每个文件的详细统计
-                    outputChannel.appendLine(`.\\${path.relative(workspaceRoot, filePath)}:`);
-                    outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
-                    outputChannel.appendLine(`  代码行: ${stats.codeLines}`);
-                    outputChannel.appendLine(`  注释行: ${stats.commentLines}`);
-                    outputChannel.appendLine(`  空行: ${stats.blankLines}\n`);
-                } catch (err) {
-                    outputChannel.appendLine(`读取文件失败: ${path.relative(workspaceRoot, filePath)} - ${err}`);
-                }
-            }
-
-            // 10. 输出分语言统计
+            // 8. 输出按语言统计
             outputChannel.appendLine('========== 按语言统计 ==========');
-            for (const [lang, stats] of Object.entries(langStats)) {
-                if (stats.files === 0) {continue;}
+            for (const [lang, s] of Object.entries(langStats)) {
+                if (s.files === 0) {continue;}
                 outputChannel.appendLine(`${lang}:`);
-                outputChannel.appendLine(`  文件数: ${stats.files}`);
-                outputChannel.appendLine(`  总行数: ${stats.totalLines}`);
-                outputChannel.appendLine(`  代码行: ${stats.codeLines}`);
-                outputChannel.appendLine(`  注释行: ${stats.commentLines}`);
-                outputChannel.appendLine(`  空行: ${stats.blankLines}\n`);
+                outputChannel.appendLine(`  文件数: ${s.files}`);
+                outputChannel.appendLine(`  总行数: ${s.totalLines}`);
+                outputChannel.appendLine(`  代码行: ${s.codeLines}`);
+                outputChannel.appendLine(`  注释行: ${s.commentLines}`);
+                outputChannel.appendLine(`  空行: ${s.blankLines}\n`);
             }
 
-            // 11. 输出总计
+            // 9. 输出总计
             outputChannel.appendLine('========== 总计 ==========');
             outputChannel.appendLine(`文件数: ${totalStats.files}`);
             outputChannel.appendLine(`总行数: ${totalStats.totalLines}`);
