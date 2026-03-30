@@ -89,6 +89,7 @@ interface ProgressBarStyle {
 let updateTimer: NodeJS.Timeout | undefined;
 let pendingDoc: vscode.TextDocument | null = null;
 let ignoreFileDebounceTimer: NodeJS.Timeout | undefined;
+let progressBarStyleconfig: ProgressBarStyle;
 
 /**
  * 获取工作区根目录
@@ -222,6 +223,7 @@ async function generateSmartIgnoreFile(workspaceRoot: string): Promise<void> {
 // 缓存 ignore 实例，避免每次重复加载文件
 let cachedIg: ReturnType<typeof ignore> | null = null;
 let cachedWorkspaceRoot: string | undefined;
+let ignoreEditedDocCache: Map<string, boolean> = new Map(); // 记录正在编辑的文档是否需要忽略，避免重复处理
 
 /**
  * 获取当前工作区的 ignore 实例（基于 .codelinesignore 或默认规则）
@@ -240,13 +242,18 @@ function getIgnoreInstance(workspaceRoot: string): ReturnType<typeof ignore> {
  * 判断文件是否应被忽略（根据 .codelinesignore）
  */
 function shouldIgnoreFile(doc: vscode.TextDocument): boolean {
+    const uri = doc.uri.toString();
+    if (ignoreEditedDocCache.has(uri)) {
+        return ignoreEditedDocCache.get(uri)!;
+    }
+
     const workspaceRoot = getWorkspaceRoot();
     if (!workspaceRoot) {return false;}
-
     //判断该文件是否属于.codelinesignore的忽略范围
     const relativePath = path.relative(workspaceRoot, doc.fileName).replace(/\\/g, '/');
     const ig = getIgnoreInstance(workspaceRoot);
     if(ig.ignores(relativePath)) {
+        ignoreEditedDocCache.set(uri, true);
         return true;
     }
 
@@ -255,9 +262,12 @@ function shouldIgnoreFile(doc: vscode.TextDocument): boolean {
     const langConfig = config.get<{ [key: string]: boolean }>('languages', {});
     const ext = path.extname(doc.fileName).toLowerCase().slice(1);
     if (langConfig[ext]) {
+        ignoreEditedDocCache.set(uri, false);
         return false;
+    } else {
+        ignoreEditedDocCache.set(uri, true);
+        return true;
     }
-    return true;
 }
 
 
@@ -299,13 +309,15 @@ function countNonBlankLines(text: string): number {
  */
 function updateTodayLinesAdded(context: vscode.ExtensionContext, delta: number) {
     const key = `linesAdded_${getTodayDateStr()}`;
-    const current = getTodayLinesAdded(context);
+    const current = context.globalState.get(key, 0);
     if (current + delta < 0) {
         context.globalState.update(key, 0);
+        //todayLinesCache = 0;
         updateProgressBar(context);
         return;
     }
     context.globalState.update(key, current + delta);
+    //todayLinesCache = current + delta;
     updateProgressBar(context);
 }
 
@@ -331,11 +343,13 @@ function updateUserTotalLines(context: vscode.ExtensionContext, delta: number) {
 function resetTodayLines(context: vscode.ExtensionContext) {
     const key = `linesAdded_${getTodayDateStr()}`;
     context.globalState.update(key, 0);
+    //todayLinesCache = 0;
     updateProgressBar(context);
 }
 
 // 全局状态存储键
 const PROGRESS_ENABLED_KEY = 'progressEnabled';
+let isProgressEnabled = false;
 const DAILY_GOAL_KEY = 'dailyGoal';
 const USER_TOTAL_LINES_KEY = 'userTotalLines';
 const GRAND_CONGRAT_KEY = 'grandCongrat';
@@ -359,6 +373,11 @@ function getProgressBarStyle(): ProgressBarStyle {
 function getCelebrationMessage(): string {
     const config = vscode.workspace.getConfiguration('code-line-counter');
     return config.get<string>('celebrationMessage', '🎉 恭喜！今日已编写 {goal} 行代码！ 🎉');
+}
+
+function getDebounceTime(): number {
+    const config = vscode.workspace.getConfiguration('code-line-counter');
+    return config.get<number>('debounceTime', 300);
 }
 
 function generateProgressBar(todayLines: number, goal: number, style: ProgressBarStyle): string {
@@ -402,28 +421,34 @@ function generateProgressBar(todayLines: number, goal: number, style: ProgressBa
     return `${icon} ${parts.join(' ')}`.trim();
 }
 
+let todayGoalCache:number | null = null;
+let hasCelebratedToday = false;
+//let todayLinesCache: number | null = null;
+
 function updateProgressBar(context: vscode.ExtensionContext) {
     if (!statusBarItem) {return;}
 
-    const enabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
-    const goal = context.globalState.get<number>(DAILY_GOAL_KEY, 0);
+    const goal = todayGoalCache!;
+    //todayGoalCache在插件激活时要么被初始化为全局状态中的值，要么是零，总归是有值的
+    //!== null ? todayGoalCache : context.globalState.get<number>(DAILY_GOAL_KEY, 0);
 
-    if (!enabled || goal <= 0) {
+    if (!isProgressEnabled || goal <= 0) {
         statusBarItem.hide();
         return;
     }
 
-    const todayLines = getTodayLinesAdded(context);
-    const style = getProgressBarStyle();
-    const barText = generateProgressBar(todayLines, goal, style);
+    //const todayLines = todayLinesCache!;
+    const todayLines = context.globalState.get(`linesAdded_${getTodayDateStr()}`, 0);
+    //同样，todayLinesCache在插件激活时要么被初始化为全局状态中的值，要么是零，总归是有值的
+    const barText = generateProgressBar(todayLines, goal, progressBarStyleconfig);
 
     statusBarItem.text = barText;
     statusBarItem.tooltip = `今日已写 ${todayLines} 行，目标 ${goal} 行`;
     statusBarItem.show();
 
-    const celebratedKey = `celebrated_${getTodayDateStr()}`;
-    const alreadyCelebrated = context.globalState.get<boolean>(celebratedKey, false);
-    if (!alreadyCelebrated && todayLines >= goal) {
+    if (!hasCelebratedToday && todayLines >= goal) {
+        hasCelebratedToday = true;
+        const celebratedKey = `celebrated_${getTodayDateStr()}`;
         context.globalState.update(celebratedKey, true);
         const messageTemplate = getCelebrationMessage();
         const message = messageTemplate
@@ -465,7 +490,9 @@ async function setDailyGoal(context: vscode.ExtensionContext) {
     if (!input || input === "CLC") {return;}
 
     const goal = parseInt(input);
+    todayGoalCache = goal;
     await context.globalState.update(DAILY_GOAL_KEY, goal);
+    isProgressEnabled = true;
     await context.globalState.update(PROGRESS_ENABLED_KEY, true);
     await context.globalState.update(`celebrated_${getTodayDateStr()}`, false);
 
@@ -503,10 +530,10 @@ async function setDailyGoal(context: vscode.ExtensionContext) {
  * 切换进度条显示
  */
 async function switchProgressBar(context: vscode.ExtensionContext) {
-    const enabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
-    await context.globalState.update(PROGRESS_ENABLED_KEY, !enabled);
+    isProgressEnabled = !isProgressEnabled;
+    await context.globalState.update(PROGRESS_ENABLED_KEY, isProgressEnabled);
     updateProgressBar(context);
-    vscode.window.showInformationMessage(`进度条已${!enabled ? '显示' : '隐藏'}`);
+    vscode.window.showInformationMessage(`进度条已${!isProgressEnabled ? '显示' : '隐藏'}`);
 }
 
 function get_enabled_languages(context: vscode.ExtensionContext) {
@@ -720,7 +747,6 @@ async function exportToMarkdown(context: vscode.ExtensionContext) {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-
     const first_time_activate = context.globalState.get<boolean>('never_been_activated', true);
     if (first_time_activate) {
         console.log('Justinian of Code-Line-Counter says Hello!');
@@ -728,6 +754,13 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     resetDailyGoalIfNeeded(context);
+    progressBarStyleconfig = getProgressBarStyle();
+    isProgressEnabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
+    todayGoalCache = context.globalState.get<number>(DAILY_GOAL_KEY, 0);
+    hasCelebratedToday = context.globalState.get<boolean>(`celebrated_${getTodayDateStr()}`, false);
+    //const TodayLinesKey = `linesAdded_${getTodayDateStr()}`;
+    //todayLinesCache = context.globalState.get<number>(TodayLinesKey, 0);
+    let debounceTime = getDebounceTime();
 
 	const disposableAnalyzeFile = vscode.commands.registerCommand(
 		'code-line-counter.analyzeCurrentFile',
@@ -911,6 +944,7 @@ export function activate(context: vscode.ExtensionContext) {
         ignoreFileDebounceTimer = setTimeout(() => {
             cachedIg = null;
             ignoreFileDebounceTimer = undefined;
+            ignoreEditedDocCache.clear();
         }, 300);
     });
     context.subscriptions.push(IgWatcher);
@@ -924,6 +958,7 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     const changeListener = vscode.workspace.onDidChangeTextDocument(event => {
+        if (debounceTime < 100) {return;}
         const doc = event.document;
         if (!isSupportedDocument(doc)) {return;}
 
@@ -949,7 +984,7 @@ export function activate(context: vscode.ExtensionContext) {
                 updateTimer = undefined;
                 pendingDoc = null;
             }
-        }, 300);
+        }, debounceTime);
     });
     context.subscriptions.push(changeListener);
 
@@ -1007,12 +1042,13 @@ export function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(switchProgressCmd);
 
-        // 监听配置变化，实时更新进度条样式和庆祝消息
+    // 监听配置变化，实时更新进度条样式和庆祝消息
     const configChangeListener = vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('code-line-counter.progressBarStyle') ||
             event.affectsConfiguration('code-line-counter.celebrationMessage')) {
             const enabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
             const goal = context.globalState.get<number>(DAILY_GOAL_KEY, 0);
+            progressBarStyleconfig = getProgressBarStyle();
             if (enabled && goal > 0) {
                 updateProgressBar(context);
             }
@@ -1020,10 +1056,16 @@ export function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(configChangeListener);
 
+    const debounceChangeListener = vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('code-line-counter.debounceTime')) {
+            debounceTime = getDebounceTime();
+        }
+    });
+    context.subscriptions.push(debounceChangeListener);
+
     // 恢复进度条状态
-    const enabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
     const goal = context.globalState.get<number>(DAILY_GOAL_KEY, 0);
-    if (enabled && goal > 0) {
+    if (isProgressEnabled && goal > 0) {
         updateProgressBar(context);
     } else {
         statusBarItem.hide();
@@ -1170,7 +1212,10 @@ function analyzeFile(content: string, ext: string): any {
 }
 
 // This method is called when your extension is deactivated
-export function deactivate() {
+export function deactivate(): void {
     if (updateTimer) {clearTimeout(updateTimer);}
     if (ignoreFileDebounceTimer) {clearTimeout(ignoreFileDebounceTimer);}
+
+    docNonBlankLinesCache.clear();
+    ignoreEditedDocCache.clear();
 }

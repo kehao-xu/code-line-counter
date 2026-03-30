@@ -2,7 +2,7 @@
   "name": "code-line-counter",
   "displayName": "code-line-counter",
   "description": "an extension that provides basic analysis of codes by c/c++, python or java",
-  "version": "0.0.5",
+  "version": "0.1.0",
   "publisher": "JustinianXU",
   "license": "MIT",
   "repository": {
@@ -135,6 +135,12 @@
           "default": "🎉 恭喜！今日已编写 {goal} 行代码！ 🎉",
           "description": "达到每日目标时显示的消息，支持变量 {goal}（目标行数）和 {lines}（实际行数）",
           "maxLength": 200
+        },
+        "code-line-counter.debounceTime": {
+          "type": "integer",
+          "default": 300,
+          "description": "实时统计防抖机制触发时长：设输入数值为x，则在每次编辑后等待x(ms)再计算行数变化，默认为300ms，小于100ms则视作禁用实时统计",
+          "maxLength": 10000
         }
       }
     },
