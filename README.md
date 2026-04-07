@@ -1,4 +1,4 @@
-# Code Line Counter : Alpha Test
+# Code Line Counter : Beta Test
 
 这是一个为 VS Code 打造的代码行统计插件，目前支持 **C/C++、Python、Java** 三种语言的精准统计，并提供智能忽略规则、进度条目标追踪、Excel 导出等实用功能。
 

@@ -1,8 +1,8 @@
 {
-  "name": "code-line-counter",
-  "displayName": "code-line-counter",
+  "name": "code-line-counter-by-JX",
+  "displayName": "Code Line Counter by JX",
   "description": "an extension that provides basic analysis of codes by c/c++, python or java",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "JustinianXU",
   "license": "MIT",
   "repository": {
@@ -26,9 +26,9 @@
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
-      "title": "Code Line Counter",
+      "title": "Code Line Counter by JX",
       "properties": {
-        "code-line-counter.languages": {
+        "code-line-counter-by-JX.languages": {
           "type": "object",
           "title": "统计语言",
           "description": "选择要统计的编程语言",
@@ -72,7 +72,7 @@
           },
           "additionalProperties": false
         },
-        "code-line-counter.progressBarStyle": {
+        "code-line-counter-by-JX.progressBarStyle": {
           "type": "object",
           "title": "进度条样式",
           "description": "自定义状态栏进度条的显示外观",
@@ -130,13 +130,13 @@
           },
           "additionalProperties": false
         },
-        "code-line-counter.celebrationMessage": {
+        "code-line-counter-by-JX.celebrationMessage": {
           "type": "string",
           "default": "🎉 恭喜！今日已编写 {goal} 行代码！ 🎉",
           "description": "达到每日目标时显示的消息，支持变量 {goal}（目标行数）和 {lines}（实际行数）",
           "maxLength": 200
         },
-        "code-line-counter.debounceTime": {
+        "code-line-counter-by-JX.debounceTime": {
           "type": "integer",
           "default": 300,
           "description": "实时统计防抖机制触发时长：设输入数值为x，则在每次编辑后等待x(ms)再计算行数变化，默认为300ms，小于100ms则视作禁用实时统计",
@@ -146,137 +146,137 @@
     },
     "commands": [
       {
-        "command": "code-line-counter.analyzeCurrentFile",
+        "command": "code-line-counter-by-JX.analyzeCurrentFile",
         "title": "CLC: Analyze Current File"
       },
       {
-        "command": "code-line-counter.analyzeWorkspace",
+        "command": "code-line-counter-by-JX.analyzeWorkspace",
         "title": "CLC: Analyze Workspace"
       },
       {
-        "command": "code-line-counter.generateIgnoreFile",
+        "command": "code-line-counter-by-JX.generateIgnoreFile",
         "title": "CLC: Generate Default .codelinesignore"
       },
       {
-        "command": "code-line-counter.generateSmartIgnoreFile",
+        "command": "code-line-counter-by-JX.generateSmartIgnoreFile",
         "title": "CLC: Generate Smart .codelinesignore"
       },
       {
-        "command": "code-line-counter.showTodayLines",
+        "command": "code-line-counter-by-JX.showTodayLines",
         "title": "CLC: Show Today's Number of Lines"
       },
       {
-        "command": "code-line-counter.showTotalLines",
+        "command": "code-line-counter-by-JX.showTotalLines",
         "title": "CLC: Show Total Lines"
       },
       {
-        "command": "code-line-counter.setDailyGoal",
+        "command": "code-line-counter-by-JX.setDailyGoal",
         "title": "CLC: Set Today's Goal"
       },
       {
-        "command": "code-line-counter.switchProgressBar",
+        "command": "code-line-counter-by-JX.switchProgressBar",
         "title": "CLC: Switch On/Off Progress Bar"
       },
       {
-        "command": "code-line-counter.resetTodayLines",
+        "command": "code-line-counter-by-JX.resetTodayLines",
         "title": "CLC: Reset Today's Lines"
       },
       {
-        "command": "code-line-counter.exportToExcel",
+        "command": "code-line-counter-by-JX.exportToExcel",
         "title": "CLC: Export Analysis to Excel"
       },
       {
-        "command": "code-line-counter.exportToMarkdown",
+        "command": "code-line-counter-by-JX.exportToMarkdown",
         "title": "CLC: Export Analysis to Markdown"
       }
     ],
     "submenus": [
       {
-        "id": "code-line-counter.submenu",
+        "id": "code-line-counter-by-JX.submenu",
         "label": "Code Line Counter"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "submenu": "code-line-counter.submenu",
+          "submenu": "code-line-counter-by-JX.submenu",
           "group": "navigation"
         }
       ],
       "explorer/context": [
         {
-          "submenu": "code-line-counter.submenu",
+          "submenu": "code-line-counter-by-JX.submenu",
           "group": "navigation"
         }
       ],
-      "code-line-counter.submenu": [
+      "code-line-counter-by-JX.submenu": [
         {
-          "command": "code-line-counter.analyzeCurrentFile",
+          "command": "code-line-counter-by-JX.analyzeCurrentFile",
           "group": "1_analyze"
         },
         {
-          "command": "code-line-counter.analyzeWorkspace",
+          "command": "code-line-counter-by-JX.analyzeWorkspace",
           "group": "1_analyze"
         },
         {
-          "command": "code-line-counter.generateIgnoreFile",
+          "command": "code-line-counter-by-JX.generateIgnoreFile",
           "group": "2_ignore"
         },
         {
-          "command": "code-line-counter.generateSmartIgnoreFile",
+          "command": "code-line-counter-by-JX.generateSmartIgnoreFile",
           "group": "2_ignore"
         },
         {
-          "command": "code-line-counter.showTodayLines",
+          "command": "code-line-counter-by-JX.showTodayLines",
           "group": "3_progress"
         },
         {
-          "command": "code-line-counter.showTotalLines",
+          "command": "code-line-counter-by-JX.showTotalLines",
           "group": "3_progress"
         },
         {
-          "command": "code-line-counter.setDailyGoal",
+          "command": "code-line-counter-by-JX.setDailyGoal",
           "group": "3_progress"
         },
         {
-          "command": "code-line-counter.switchProgressBar",
+          "command": "code-line-counter-by-JX.switchProgressBar",
           "group": "3_progress"
         },
         {
-          "command": "code-line-counter.resetTodayLines",
+          "command": "code-line-counter-by-JX.resetTodayLines",
           "group": "3_progress"
         },
         {
-          "command": "code-line-counter.exportToExcel",
+          "command": "code-line-counter-by-JX.exportToExcel",
           "group": "4_export"
         },
         {
-          "command": "code-line-counter.exportToMarkdown",
+          "command": "code-line-counter-by-JX.exportToMarkdown",
           "group": "4_export"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "code-line-counter.analyzeCurrentFile",
+        "command": "code-line-counter-by-JX.analyzeCurrentFile",
         "key": "ctrl+shift+l",
         "mac": "cmd+shift+l",
         "when": "editorTextFocus && !editorReadonly"
       },
       {
-        "command": "code-line-counter.showTodayLines",
+        "command": "code-line-counter-by-JX.showTodayLines",
         "key": "ctrl+shift+t",
         "mac": "cmd+shift+t",
         "when": "!terminalFocus"
       },
       {
-        "command": "code-line-counter.setDailyGoal",
+        "command": "code-line-counter-by-JX.setDailyGoal",
         "key": "ctrl+shift+g",
         "mac": "cmd+shift+g",
         "when": "!terminalFocus"
       },
       {
-        "command": "code-line-counter.switchProgressBar",
+        "command": "code-line-counter-by-JX.switchProgressBar",
         "key": "ctrl+shift+r",
         "mac": "cmd+shift+r",
         "when": "!terminalFocus"

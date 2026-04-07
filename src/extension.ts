@@ -258,7 +258,7 @@ function shouldIgnoreFile(doc: vscode.TextDocument): boolean {
     }
 
     // 判断该文件的扩展名是否属于用户配置中启用的语言
-    const config = vscode.workspace.getConfiguration('code-line-counter');
+    const config = vscode.workspace.getConfiguration('code-line-counter-by-JX');
     const langConfig = config.get<{ [key: string]: boolean }>('languages', {});
     const ext = path.extname(doc.fileName).toLowerCase().slice(1);
     if (langConfig[ext]) {
@@ -358,7 +358,7 @@ const GRAND_CONGRAT_KEY = 'grandCongrat';
 let statusBarItem: vscode.StatusBarItem;
 
 function getProgressBarStyle(): ProgressBarStyle {
-    const config = vscode.workspace.getConfiguration('code-line-counter');
+    const config = vscode.workspace.getConfiguration('code-line-counter-by-JX');
     const styleConfig = config.get<any>('progressBarStyle', {});
     return {
         type: styleConfig.type ?? 'default',
@@ -371,12 +371,12 @@ function getProgressBarStyle(): ProgressBarStyle {
 }
 
 function getCelebrationMessage(): string {
-    const config = vscode.workspace.getConfiguration('code-line-counter');
+    const config = vscode.workspace.getConfiguration('code-line-counter-by-JX');
     return config.get<string>('celebrationMessage', '🎉 恭喜！今日已编写 {goal} 行代码！ 🎉');
 }
 
 function getDebounceTime(): number {
-    const config = vscode.workspace.getConfiguration('code-line-counter');
+    const config = vscode.workspace.getConfiguration('code-line-counter-by-JX');
     return config.get<number>('debounceTime', 300);
 }
 
@@ -507,7 +507,7 @@ async function setDailyGoal(context: vscode.ExtensionContext) {
             if (Selection === '打开设置'){
                 vscode.commands.executeCommand(
                     'workbench.action.openSettings',
-                    'Extensions:code-line-counter'
+                    'Extensions:code-line-counter-by-JX'
                 );
             }
         });
@@ -519,7 +519,7 @@ async function setDailyGoal(context: vscode.ExtensionContext) {
             if (Selection === '打开设置'){
                 vscode.commands.executeCommand(
                     'workbench.action.openSettings',
-                    'Extensions:code-line-counter'
+                    'Extensions:code-line-counter-by-JX'
                 );
             }
         });
@@ -537,7 +537,7 @@ async function switchProgressBar(context: vscode.ExtensionContext) {
 }
 
 function get_enabled_languages(context: vscode.ExtensionContext) {
-    const config = vscode.workspace.getConfiguration('code-line-counter');
+    const config = vscode.workspace.getConfiguration('code-line-counter-by-JX');
     const langConfig = config.get<{ [key: string]: boolean }>('languages', {});
     const enabledLanguages: { ext: string; lang: string }[] = [];
 
@@ -749,7 +749,7 @@ async function exportToMarkdown(context: vscode.ExtensionContext) {
 export function activate(context: vscode.ExtensionContext) {
     const first_time_activate = context.globalState.get<boolean>('never_been_activated', true);
     if (first_time_activate) {
-        console.log('Justinian of Code-Line-Counter says Hello!');
+        console.log('Justinian of Code-Line-Counter-by-JX says Hello!');
         context.globalState.update('never_been_activated',false);
     }
 
@@ -763,7 +763,7 @@ export function activate(context: vscode.ExtensionContext) {
     let debounceTime = getDebounceTime();
 
 	const disposableAnalyzeFile = vscode.commands.registerCommand(
-		'code-line-counter.analyzeCurrentFile',
+		'code-line-counter-by-JX.analyzeCurrentFile',
 		() => {
 			const editor = vscode.window.activeTextEditor;
 			if (!editor) {
@@ -793,7 +793,7 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(disposableAnalyzeFile);
 
         const disposableAnalyzeWorkspace = vscode.commands.registerCommand(
-        'code-line-counter.analyzeWorkspace',
+        'code-line-counter-by-JX.analyzeWorkspace',
         async () => {
             // 1. 检查工作区
             const workspaceRoot = getWorkspaceRoot();
@@ -907,7 +907,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // 可选命令：生成默认 .codelinesignore 文件
     const disposableGenerateIgnore = vscode.commands.registerCommand(
-        'code-line-counter.generateIgnoreFile',
+        'code-line-counter-by-JX.generateIgnoreFile',
         async () => {
             const workspaceRoot = getWorkspaceRoot();
             if (!workspaceRoot) {
@@ -923,7 +923,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // 可选命令：通过扫描智能生成 .codelinesignore 文件
     const disposableSmartGenerateIgnore = vscode.commands.registerCommand(
-        'code-line-counter.generateSmartIgnoreFile',
+        'code-line-counter-by-JX.generateSmartIgnoreFile',
         async () => {
             const workspaceRoot = getWorkspaceRoot();
             if (!workspaceRoot) {
@@ -1017,35 +1017,35 @@ export function activate(context: vscode.ExtensionContext) {
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     context.subscriptions.push(statusBarItem);
 
-    const showTotalCommand = vscode.commands.registerCommand('code-line-counter.showTotalLines',() =>{
+    const showTotalCommand = vscode.commands.registerCommand('code-line-counter-by-JX.showTotalLines',() =>{
         const total = context.globalState.get<number>(USER_TOTAL_LINES_KEY, 0);
         vscode.window.showInformationMessage(`自安装插件以来，已经撰写了${total}行代码`);
     });
     context.subscriptions.push(showTotalCommand);
 
     // 可选：注册一个命令，让用户可以查看今日代码量
-    const showCommand = vscode.commands.registerCommand('code-line-counter.showTodayLines', () => {
+    const showCommand = vscode.commands.registerCommand('code-line-counter-by-JX.showTodayLines', () => {
         const lines = getTodayLinesAdded(context);
         vscode.window.showInformationMessage(`今日已写 ${lines} 行代码`);
     });
     context.subscriptions.push(showCommand);
 
     // 注册设置目标命令
-    const setGoalCmd = vscode.commands.registerCommand('code-line-counter.setDailyGoal', () => {
+    const setGoalCmd = vscode.commands.registerCommand('code-line-counter-by-JX.setDailyGoal', () => {
         setDailyGoal(context);
     });
     context.subscriptions.push(setGoalCmd);
 
     // 注册切换进度条命令
-    const switchProgressCmd = vscode.commands.registerCommand('code-line-counter.switchProgressBar', () => {
+    const switchProgressCmd = vscode.commands.registerCommand('code-line-counter-by-JX.switchProgressBar', () => {
         switchProgressBar(context);
     });
     context.subscriptions.push(switchProgressCmd);
 
     // 监听配置变化，实时更新进度条样式和庆祝消息
     const configChangeListener = vscode.workspace.onDidChangeConfiguration(event => {
-        if (event.affectsConfiguration('code-line-counter.progressBarStyle') ||
-            event.affectsConfiguration('code-line-counter.celebrationMessage')) {
+        if (event.affectsConfiguration('code-line-counter-by-JX.progressBarStyle') ||
+            event.affectsConfiguration('code-line-counter-by-JX.celebrationMessage')) {
             const enabled = context.globalState.get<boolean>(PROGRESS_ENABLED_KEY, false);
             const goal = context.globalState.get<number>(DAILY_GOAL_KEY, 0);
             progressBarStyleconfig = getProgressBarStyle();
@@ -1057,7 +1057,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(configChangeListener);
 
     const debounceChangeListener = vscode.workspace.onDidChangeConfiguration(event => {
-        if (event.affectsConfiguration('code-line-counter.debounceTime')) {
+        if (event.affectsConfiguration('code-line-counter-by-JX.debounceTime')) {
             debounceTime = getDebounceTime();
         }
     });
@@ -1071,17 +1071,17 @@ export function activate(context: vscode.ExtensionContext) {
         statusBarItem.hide();
     }
 
-    const exportExcelCmd = vscode.commands.registerCommand('code-line-counter.exportToExcel', () => {
+    const exportExcelCmd = vscode.commands.registerCommand('code-line-counter-by-JX.exportToExcel', () => {
         exportToExcel(context);
     });
     context.subscriptions.push(exportExcelCmd);
 
-    const exportMarkdownCmd = vscode.commands.registerCommand('code-line-counter.exportToMarkdown', () => {
+    const exportMarkdownCmd = vscode.commands.registerCommand('code-line-counter-by-JX.exportToMarkdown', () => {
         exportToMarkdown(context);
     });
     context.subscriptions.push(exportMarkdownCmd);
 
-    const resetCmd = vscode.commands.registerCommand('code-line-counter.resetTodayLines', 
+    const resetCmd = vscode.commands.registerCommand('code-line-counter-by-JX.resetTodayLines', 
         async() => {
         const answer = await vscode.window.showWarningMessage('确定要重置今日累计行数吗？', '重置', '取消');
         if (answer === '重置') {
